@@ -1,0 +1,95 @@
+/* Pre-publish check: runs dashboard.html's script against a minimal DOM stub and
+   reports runtime errors, so a broken page is caught before it is published.
+   Usage:  node verify.js [dashboard.html] */
+const fs = require("fs");
+const path = require("path");
+const target = process.argv[2] || path.join(__dirname, "dashboard.html");
+const html = fs.readFileSync(target, "utf8");
+
+const realIds = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]));
+const listeners = [];
+
+function makeEl(tag = "div", id = null) {
+  const e = {
+    tagName: tag, id, _attrs: {}, _children: [], dataset: {},
+    style: new Proxy({}, { set: () => true, get: () => "" }),
+    classList: { add() {}, remove() {}, contains: () => false },
+    setAttribute(k, v) { this._attrs[k] = v; },
+    getAttribute(k) { return this._attrs[k] ?? null; },
+    appendChild(c) { this._children.push(c); return c; },
+    addEventListener(ev, fn) { listeners.push([this, ev, fn]); },
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 760, height: 230 }),
+    querySelector: sel => makeEl(sel === "svg" ? "svg" : "div"),
+    querySelectorAll: () => [],
+    clientWidth: 760, clientHeight: 230, value: "17",
+  };
+  Object.defineProperty(e, "innerHTML",   { set(v){this._html=String(v);}, get(){return this._html||"";} });
+  Object.defineProperty(e, "textContent", { set(v){this._text=String(v);}, get(){return this._text||"";} });
+  Object.defineProperty(e, "hidden",      { set(v){this._hidden=v;},      get(){return this._hidden;} });
+  return e;
+}
+
+const els = new Map();
+const missing = [];
+const document = {
+  createElementNS: (ns, tag) => makeEl(tag),
+  createElement: tag => makeEl(tag),
+  getElementById(id) {
+    if (!realIds.has(id)) { missing.push(id); }
+    if (!els.has(id)) els.set(id, makeEl("div", id));
+    return els.get(id);
+  },
+  querySelectorAll(sel) {
+    if (sel === "[data-toggle]") {
+      return [...html.matchAll(/data-toggle="([^"]+)"/g)].map(m => {
+        const b = makeEl("button"); b.dataset.toggle = m[1]; return b;
+      });
+    }
+    return [];
+  },
+};
+const window = { addEventListener: (ev, fn) => listeners.push([window, ev, fn]) };
+
+const script = html.slice(html.indexOf("<script>") + 8, html.lastIndexOf("</scr" + "ipt>"));
+let fail = 0;
+
+try {
+  new Function("document", "window", script)(document, window);
+  console.log("boot .......... OK");
+} catch (e) {
+  console.error("boot .......... FAILED:", e.message);
+  console.error(e.stack.split("\n").slice(0, 3).join("\n"));
+  process.exit(1);
+}
+
+const fire = (pred, label) => {
+  let n = 0, err = 0, firstMsg = "";
+  for (const [t, ev, cb] of listeners) {
+    if (!pred(t, ev)) continue;
+    try { cb({ clientX: 400, clientY: 100 }); n++; }
+    catch (e) { if (!err++) firstMsg = e.message; }
+  }
+  if (err) { console.error(`${label} FAILED: ${err} error(s), first: ${firstMsg}`); fail++; }
+  else console.log(`${label} OK (${n} handler${n === 1 ? "" : "s"})`);
+};
+
+// sliders: re-run the whole render at a different rate/wattage
+const rate = els.get("rate"), sysw = els.get("sysw");
+if (rate) rate.value = "42.5";
+if (sysw) sysw.value = "125";
+fire((t, ev) => (t === rate || t === sysw) && ev === "input", "sliders ....... ");
+fire((t, ev) => ["mouseenter", "mousemove", "mouseleave"].includes(ev), "hover ......... ");
+fire((t, ev) => ev === "click", "toggles ....... ");
+
+if (missing.length) {
+  console.error("missing ids ... FAILED:", [...new Set(missing)].join(", "));
+  fail++;
+} else console.log("element ids ... OK");
+
+const findings = (els.get("findings")?._html.match(/class="finding[ "]/g) || []).length;
+console.log(`findings ...... ${findings} rendered`);
+const hero = (els.get("hero-cost")?._text || "") + (els.get("hero-unit")?._text || "");
+console.log(`hero .......... ${hero} (at 42.5c/kWh + 125W)`);
+
+console.log(fail ? "\nRESULT: FAILED - do not publish" : "\nRESULT: PASS - safe to publish");
+process.exit(fail ? 1 : 0);

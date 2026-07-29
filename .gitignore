@@ -1,0 +1,19 @@
+# Captured telemetry never belongs in the repo. These files describe a specific
+# machine and its network: client identifiers, prompt sizes, model inventory.
+dataset.json
+history.json
+history.json.old
+machine.json
+dashboard.html
+refresh.log
+refresh.log.old
+
+# the sample dataset IS tracked - it is synthetic
+!sample/dataset.sample.json
+
+# editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+*.swp
