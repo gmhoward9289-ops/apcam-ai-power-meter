@@ -59,6 +59,16 @@ p { margin: 0; }
 .masthead .sub { color: var(--ink-2); font-size: 13px; margin-top: 3px; }
 .host { font-family: var(--mono); font-size: 11px; color: var(--muted);
   text-align: right; line-height: 1.65; }
+.mpick { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; padding-top: 4px; }
+.mpick button { font-family: var(--mono); font-size: 11px; letter-spacing: 0.05em;
+  background: none; border: 1px solid var(--rule); color: var(--ink-2);
+  padding: 4px 12px; border-radius: 2px; cursor: pointer; }
+.mpick button:hover { border-color: var(--muted); color: var(--ink); }
+.mpick button[aria-pressed="true"] { background: var(--surface); color: var(--ink);
+  border-color: var(--muted); box-shadow: inset 0 -2px 0 var(--s1); }
+.combined { background: var(--surface); border: 1px solid var(--bezel);
+  border-radius: var(--r); overflow: hidden; }
+.combined-head { padding: 12px 18px; }
 
 .panel { position: relative; background: var(--surface); border: 1px solid var(--bezel);
   border-radius: var(--r); padding: 18px; display: flex; flex-direction: column; gap: 14px; }
@@ -189,7 +199,10 @@ pre code { background: none; border: 0; padding: 0; }
       <p class="sub" id="sub"></p>
     </div>
     <div class="host" id="host"></div>
+    <nav class="mpick" id="mpick" aria-label="Machine" hidden></nav>
   </header>
+
+  <section class="combined" id="combined" aria-label="Combined totals" hidden></section>
 
   <div id="app"></div>
 
@@ -357,6 +370,7 @@ const NS = "http://www.w3.org/2000/svg";
 const el = (n, a = {}) => { const e = document.createElementNS(NS, n);
   for (const k in a) e.setAttribute(k, a[k]); return e; };
 const fmtMoney = usd => usd < 1 ? (usd * 100).toFixed(usd < 0.01 ? 3 : 2) + "¢" : "$" + usd.toFixed(2);
+const fmtCo2 = g => g < 1000 ? Math.round(g) + " g" : (g / 1000).toFixed(2) + " kg";
 function dur(s) {
   if (s < 60) return s.toFixed(1) + "s";
   const m = Math.floor(s / 60), r = Math.round(s % 60);
@@ -371,9 +385,38 @@ const hhmmLocal = d => String(d.getHours()).padStart(2, "0") + ":" + String(d.ge
 const num = (n, d = 0) => (n == null ? "—"
   : n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }));
 
+/* ---------- multi-machine wrapper ----------
+   build.ps1 injects {"schema":1,"multi":true,"machines":[ds1,ds2,...]} when
+   given several datasets; each element is one machine's full dataset. A plain
+   dataset renders exactly as it always has. */
+const MULTI = DATA.multi === true && Array.isArray(DATA.machines) && DATA.machines.length > 0;
+const PAGES = MULTI ? DATA.machines : [DATA];
+const pageLabel = (ds, i) => ds.label || (ds.machine || {}).host ||
+  (ds.machine || {}).gpuName || "Machine " + (i + 1);
+/* Sliders are per-page: each machine keeps its own rate / system-draw / CO2
+   settings, seeded from its own dataset. Defaults match the markup. */
+const CTL = PAGES.map(ds => ({ rate: "17", sysw: String((ds.machine || {}).systemWatts ?? 70), co2: "370" }));
+let PAGE = 0;
+let repaintPage = () => {};
+let resizePage = () => {};
+let csvEv = null, csvRt = null;
+
+/* Renders one machine's dataset into the shared skeleton. Runs once for a
+   single-dataset build; once per switch in a multi build. */
+function renderPage(DATA, ctl) {
+
 const EV = (DATA.events || []).slice().sort((a, b) => a.start.localeCompare(b.start));
 const RATES = DATA.rates || [];
 const MACH = DATA.machine || {};
+
+/* Reset the shared skeleton: a machine with no events must not inherit the
+   previous machine's charts. On the first (or only) render these all match
+   the initial markup, so a single-dataset page is untouched by them. */
+document.getElementById("app").innerHTML = "";
+document.getElementById("meter").hidden = true;
+document.getElementById("body").hidden = true;
+document.getElementById("findings").innerHTML = "";
+repaintPage = () => {}; resizePage = () => {}; csvEv = null; csvRt = null;
 
 /* ---------- empty state: a fresh install with no inference yet ---------- */
 if (!EV.length) {
@@ -443,7 +486,6 @@ const GPU_IDLE   = MACH.gpuIdleW ?? 0;
 let RATE = 0.17;
 let SYSW = MACH.systemWatts ?? 70;
 let CO2 = 370;
-const fmtCo2 = g => g < 1000 ? Math.round(g) + " g" : (g / 1000).toFixed(2) + " kg";
 
 const activeW = () => GPU_ACTIVE + SYSW;
 const idleW   = () => GPU_IDLE + SYSW;
@@ -712,7 +754,11 @@ function chartCumulative() {
    Rates carry no reliable per-request identity, so model is the x axis. */
 function chartTps() {
   const host = document.getElementById("c-tps");
-  const svg = host.querySelector("svg"), tip = host.querySelector(".tip");
+  let svg = host.querySelector("svg"), tip = host.querySelector(".tip");
+  if (!svg) {  /* a previous no-rates render replaced the svg with a note */
+    host.innerHTML = `<svg viewBox="0 0 460 250"></svg><div class="tip"></div>`;
+    svg = host.querySelector("svg"); tip = host.querySelector(".tip");
+  }
   svg.innerHTML = "";
   if (!rateGroups.length) {
     document.getElementById("tps-title").textContent = "Generation rate by model";
@@ -1099,15 +1145,6 @@ function paintStatic() {
     `rebuild covers a longer window than Ollama's own logs retain.`;
 }
 
-document.querySelectorAll("[data-toggle]").forEach(b => {
-  b.addEventListener("click", () => {
-    const t = document.getElementById(b.dataset.toggle);
-    const open = b.getAttribute("aria-expanded") === "true";
-    b.setAttribute("aria-expanded", String(!open));
-    t.hidden = open;
-  });
-});
-
 function readControls() {
   RATE = parseFloat(document.getElementById("rate").value) / 100;
   SYSW = parseFloat(document.getElementById("sysw").value);
@@ -1121,8 +1158,10 @@ function repaint() {
   chartCumulative(); chartTps(); chartDur();
   chartModel(); chartPerMillion(); chartClients();
 }
-document.getElementById("sysw").value = String(SYSW);
-["rate", "sysw", "co2"].forEach(id => document.getElementById(id).addEventListener("input", repaint));
+document.getElementById("rate").value = ctl.rate;
+document.getElementById("sysw").value = ctl.sysw;
+document.getElementById("co2").value = ctl.co2;
+repaintPage = repaint;
 
 /* =================== csv export =================== */
 function csvDownload(name, header, rows) {
@@ -1134,17 +1173,102 @@ function csvDownload(name, header, rows) {
   a.click();
   URL.revokeObjectURL(a.href);
 }
-document.getElementById("csv-ev").addEventListener("click", () =>
+csvEv = () =>
   csvDownload("apcam-events.csv",
     ["start", "dur_s", "status", "client", "path", "model", "ctx"],
-    EV.map(e => [e.start, e.dur, e.status, e.client, e.path, e.model, e.ctx])));
-document.getElementById("csv-rt").addEventListener("click", () =>
+    EV.map(e => [e.start, e.dur, e.status, e.client, e.path, e.model, e.ctx]));
+csvRt = () =>
   csvDownload("apcam-rates.csv",
     ["ts", "tok_per_s", "gen_tokens_min", "model", "ctx"],
-    RATES.map(r => [r.ts, r.tps, r.gen, r.model, r.ctx])));
+    RATES.map(r => [r.ts, r.tps, r.gen, r.model, r.ctx]));
+resizePage = () => { chartModel(); chartClients(); };
 
 paintStatic(); paintTiles(); paintInventory(); repaint();
-window.addEventListener("resize", () => { chartModel(); chartClients(); });
 
 }
+}
+
+/* =================== page chrome: bound once =================== */
+/* These listeners live on static elements, so they attach exactly once and
+   dispatch to whichever machine's page is currently rendered. */
+document.querySelectorAll("[data-toggle]").forEach(b => {
+  b.addEventListener("click", () => {
+    const t = document.getElementById(b.dataset.toggle);
+    const open = b.getAttribute("aria-expanded") === "true";
+    b.setAttribute("aria-expanded", String(!open));
+    t.hidden = open;
+  });
+});
+["rate", "sysw", "co2"].forEach(id =>
+  document.getElementById(id).addEventListener("input", () => {
+    const c = CTL[PAGE];
+    c.rate = document.getElementById("rate").value;
+    c.sysw = document.getElementById("sysw").value;
+    c.co2 = document.getElementById("co2").value;
+    repaintPage();
+    if (MULTI) paintCombined();
+  }));
+document.getElementById("csv-ev").addEventListener("click", () => { if (csvEv) csvEv(); });
+document.getElementById("csv-rt").addEventListener("click", () => { if (csvRt) csvRt(); });
+window.addEventListener("resize", () => resizePage());
+
+/* =================== multi-machine chrome =================== */
+/* Combined strip: only additive totals are summed across machines - requests,
+   active seconds, Wh, cost, CO2 - each machine at its own measured wattages
+   and its own slider settings. Per-request economics (tok/s, $/Mtok) are
+   deliberately never averaged across machines: the wattages behind them are
+   per-machine measurements, and a blended figure would describe no machine. */
+function paintCombined() {
+  let req = 0, sec = 0, wh = 0, usd = 0, co2g = 0;
+  PAGES.forEach((p, i) => {
+    const m = p.machine || {}, c = CTL[i];
+    const w = (m.gpuActiveW ?? 0) + (parseFloat(c.sysw) || 0);
+    const s = (p.events || []).reduce((a, e) => a + e.dur, 0);
+    const k = s * w / 3600 / 1000;
+    req += (p.events || []).length; sec += s; wh += k * 1000;
+    usd += k * ((parseFloat(c.rate) || 0) / 100);
+    co2g += k * (parseFloat(c.co2) || 0);
+  });
+  document.getElementById("combined").innerHTML =
+    `<div class="combined-head"><span class="eyebrow">All machines &middot; ` +
+    `additive totals, each machine at its own sliders</span></div>` +
+    `<div class="readouts">` + [
+      ["Machines", String(PAGES.length), "", "machines"],
+      ["Requests", String(req), "", "requests"],
+      ["Active time", dur(sec), "", "active"],
+      ["Energy", num(wh, 1), "Wh", "energy"],
+      ["Electricity", fmtMoney(usd), "", "cost"],
+      ["CO&#8322;", fmtCo2(co2g), "", "co2"]
+    ].map(([k, v, u, cid]) =>
+      `<div class="readout"><span class="k">${k}</span>` +
+      `<span class="v" data-comb="${cid}">${v}${u ? `<small>${u}</small>` : ""}</span></div>`).join("") +
+    `</div>`;
+}
+
+if (MULTI) {
+  const labels = PAGES.map((p, i) => pageLabel(p, i));
+  labels.forEach((l, i) => {
+    const prior = labels.slice(0, i).filter(x => x === l).length;
+    if (prior) labels[i] = l + " #" + (prior + 1);
+  });
+  const nav = document.getElementById("mpick");
+  const btns = PAGES.map((p, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = labels[i];
+    b.setAttribute("aria-pressed", String(i === PAGE));
+    b.addEventListener("click", () => {
+      PAGE = i;
+      btns.forEach((x, j) => x.setAttribute("aria-pressed", String(j === PAGE)));
+      renderPage(PAGES[PAGE], CTL[PAGE]);
+      paintCombined();
+    });
+    nav.appendChild(b);
+    return b;
+  });
+  nav.hidden = false;
+  document.getElementById("combined").hidden = false;
+  paintCombined();
+}
+renderPage(PAGES[PAGE], CTL[PAGE]);
 </script>

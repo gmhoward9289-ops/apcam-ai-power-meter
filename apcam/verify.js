@@ -3,6 +3,10 @@
    Also re-derives the dataset-conditional features (idle-policy advisor, hosted
    reference, hardware amortization) from the injected data and fails if the
    page disagrees.
+   A multi-machine build (injected data has multi:true) is checked differently:
+   the machine picker must exist, every machine's page must render when its
+   picker handler fires, and the combined strip must equal the sum of
+   per-machine totals re-derived from the injected JSON.
    Usage:  node verify.js [dashboard.html] */
 const fs = require("fs");
 const path = require("path");
@@ -103,6 +107,85 @@ try {
   DS = JSON.parse(html.slice(html.indexOf("/*BEGIN_DATA*/") + "/*BEGIN_DATA*/".length,
                              html.indexOf("/*END_DATA*/")));
 } catch { /* unparsable data would already have failed boot */ }
+if (DS.multi === true && Array.isArray(DS.machines)) {
+
+/* =========== multi-machine build: picker, per-machine render, combined =========== */
+const machines = DS.machines;
+const mp = els.get("mpick");
+const btns = (mp ? mp._children : []).filter(c => c && c.tagName === "button");
+if (mp && mp._hidden === false && btns.length === machines.length && btns.every(b => b._text))
+  console.log(`picker ........ OK (${btns.length} machines: ${btns.map(b => b._text).join(", ")})`);
+else {
+  console.error(`picker ........ FAILED: ${btns.length} button(s) for ${machines.length} machines` +
+    (mp && mp._hidden === false ? "" : " (or #mpick still hidden)"));
+  fail++;
+}
+
+/* The generic slider block above fired while machine 0 was current, so its
+   page carries 42.5c / 125 W / 500 g; every other machine keeps its own
+   defaults (17c, its dataset's systemWatts, 370 g). Re-derive each page's
+   expected hero from that model, then click through the picker. */
+const ctl = machines.map((m, i) => i === 0
+  ? { rate: 42.5, sysw: 125, co2: 500 }
+  : { rate: 17, sysw: (m.machine || {}).systemWatts ?? 70, co2: 370 });
+const fmtMoney = usd => usd < 1 ? (usd * 100).toFixed(usd < 0.01 ? 3 : 2) + "¢" : "$" + usd.toFixed(2);
+const numFmt = (n, d) => n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+const durFmt = s => { if (s < 60) return s.toFixed(1) + "s";
+  const m = Math.floor(s / 60), r = Math.round(s % 60);
+  if (m < 60) return `${m}m ${String(r).padStart(2, "0")}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`; };
+const machSec = m => (m.events || []).reduce((a, e) => a + e.dur, 0);
+const machW = (m, c) => (((m.machine || {}).gpuActiveW ?? 0) + c.sysw);
+const machUsd = (m, c) => machSec(m) * machW(m, c) / 3600 / 1000 * (c.rate / 100);
+const clickBtn = b => { let n = 0;
+  for (const [t, ev, cb] of [...listeners]) if (t === b && ev === "click") { cb({}); n++; }
+  return n; };
+
+let switchFail = 0;
+machines.forEach((m, i) => {
+  if (!clickBtn(btns[i])) {
+    console.error(`machine ${i} ..... FAILED: picker button has no click handler`);
+    switchFail++; return;
+  }
+  const nEv = (m.events || []).length;
+  const want = fmtMoney(machUsd(m, ctl[i]));
+  const got = (els.get("hero-cost")?._text || "") + (els.get("hero-unit")?._text || "");
+  const sub = els.get("sub")?._html || "";
+  const heroOk = nEv ? got === want : true;           // no events -> empty state, no hero
+  const subOk = nEv ? sub.includes(`${nEv} inference requests`) : true;
+  if (heroOk && subOk)
+    console.log(`machine ${i} ..... OK (hero ${got} at ${ctl[i].rate}c + ${ctl[i].sysw}W)`);
+  else {
+    console.error(`machine ${i} ..... FAILED: hero "${got}" want "${want}"` +
+      (subOk ? "" : `; sub wrong: "${sub}"`));
+    switchFail++;
+  }
+});
+if (switchFail) fail++;
+
+/* combined strip: totals must equal the sum of per-machine recomputations */
+let req = 0, sec = 0, wh = 0, usd = 0;
+machines.forEach((m, i) => {
+  req += (m.events || []).length; sec += machSec(m);
+  wh += machSec(m) * machW(m, ctl[i]) / 3600;
+  usd += machUsd(m, ctl[i]);
+});
+const ch = els.get("combined")?._html || "";
+const cell = k => { const mm = ch.match(new RegExp(`data-comb="${k}"[^>]*>([^<]*)`)); return mm ? mm[1] : null; };
+const wantC = { machines: String(machines.length), requests: String(req),
+  active: durFmt(sec), energy: numFmt(wh, 1), cost: fmtMoney(usd) };
+const badC = Object.keys(wantC).filter(k => cell(k) !== wantC[k]);
+if (!badC.length && els.get("combined")?._hidden === false)
+  console.log(`combined ...... OK (${req} req, ${numFmt(wh, 1)} Wh, ${fmtMoney(usd)} across ${machines.length} machines)`);
+else {
+  console.error("combined ...... FAILED: " + (els.get("combined")?._hidden === false
+    ? badC.map(k => `${k}="${cell(k)}" want "${wantC[k]}"`).join("; ")
+    : "#combined still hidden"));
+  fail++;
+}
+
+} else {
+
 const dsEv = (DS.events || []).slice().sort((a, b) => a.start.localeCompare(b.start));
 const perHtml = els.get("t-per")?._html || "";
 
@@ -140,6 +223,8 @@ if (wantAdv === haveAdv)
 else {
   console.error(`advisor ....... FAILED: expected ${wantAdv ? "shown" : "hidden"}, got the opposite`);
   fail++;
+}
+
 }
 
 console.log(fail ? "\nRESULT: FAILED - do not publish" : "\nRESULT: PASS - safe to publish");
