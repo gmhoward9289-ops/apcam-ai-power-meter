@@ -89,6 +89,14 @@ which ones to trust.
 | **Estimated** | Non-GPU system draw (the slider, default 70 W). And the assumption that the GPU holds sustained wattage for a whole request — short requests spend part of their time loading weights at lower draw, so their energy is mildly over-stated. |
 | **Not measured** | Wall power. Only the GPU is instrumented; a plug meter is the sole way to close the gap between the GPU figure and what the outlet delivers. |
 
+### Optional: hardware amortization
+
+Add `gpuCostUSD` (and optionally `gpuLifetimeYears`, default 3) to `machine.json` by
+hand and the cost-per-million-tokens table gains an **incl. hardware** column — the
+card's price spread over its expected lifetime of wall-clock time, on top of
+electricity. Caveat: `calibrate.ps1` currently rewrites `machine.json` from scratch,
+so re-add the field after any recalibration.
+
 ### Two limits worth understanding
 
 These are properties of the log data, not bugs, and the tool will not paper over them:
