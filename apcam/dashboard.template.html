@@ -295,7 +295,7 @@ pre code { background: none; border: 0; padding: 0; }
           <div class="panel-head">
             <div>
               <h3>Cost per million generated tokens</h3>
-              <p class="panel-note">Electricity only, at the rates measured on this machine.</p>
+              <p class="panel-note" id="per-note">Electricity only, at the rates measured on this machine.</p>
             </div>
           </div>
           <div class="chart" id="c-per"><svg viewBox="0 0 460 160"></svg></div>
@@ -451,6 +451,29 @@ const kwh  = sec => sec * activeW() / 3600 / 1000;
 const cost = sec => kwh(sec) * RATE;
 const perMillion = tps => tps > 0 ? (1e6 / tps) * activeW() / 3600 / 1000 * RATE : 0;
 
+/* Hardware amortization: opt-in via a hand-added gpuCostUSD in machine.json.
+   The card's price is spread over gpuLifetimeYears (default 3) of wall-clock
+   time, so a window covering 1% of the lifetime carries 1% of the card. */
+const GPU_COST = (typeof MACH.gpuCostUSD === "number" && MACH.gpuCostUSD > 0) ? MACH.gpuCostUSD : 0;
+const GPU_LIFE = MACH.gpuLifetimeYears > 0 ? MACH.gpuLifetimeYears : 3;
+const hwPerSec = GPU_COST / (GPU_LIFE * 365.25 * 24 * 3600);
+const perMillionHw = tps => tps > 0 ? (1e6 / tps) * hwPerSec : 0;
+
+/* Idle-policy advisor: seconds a sleep-after-N-minutes policy would have
+   slept through. A gap runs from one request's end to the next request's
+   start; overlapping requests never open one. */
+const SLEEP_AFTER_MIN = 15;
+const sleepGaps = (() => {
+  const n = SLEEP_AFTER_MIN * 60;
+  let sec = 0, count = 0, end = null;
+  EV.forEach(e => {
+    const s = new Date(e.start).getTime() / 1000;
+    if (end != null && s - end > n) { sec += s - end - n; count++; }
+    end = end == null ? s + e.dur : Math.max(end, s + e.dur);
+  });
+  return { sec, count };
+})();
+
 const rateGroups = (() => {
   const g = {};
   RATES.forEach(r => { (g[r.model || "unattributed"] = g[r.model || "unattributed"] || []).push(r); });
@@ -543,6 +566,23 @@ function paintFindings() {
     `generation, <strong>${(idleCost / infCost).toFixed(1)}x more</strong>. On this hardware the ` +
     `idle floor, not the workload, is the bill.`]);
 
+  // Idle-policy advisor. Needs enough window to mean anything, and at least
+  // one gap the policy would actually have slept through.
+  const sleepSave = idleW() * sleepGaps.sec / 3600 / 1000 * RATE;
+  if (windowSec >= 2 * 3600 && sleepSave > 0) {
+    const monthly = sleepSave * 30 * 24 * 3600 / windowSec;
+    F.push(["info", IC_INFO,
+      `Sleeping after ${SLEEP_AFTER_MIN} idle minutes would have saved ${fmtMoney(sleepSave)} here`,
+      `${sleepGaps.count} gap${sleepGaps.count === 1 ? "" : "s"} between requests ran past ` +
+      `${SLEEP_AFTER_MIN} minutes &mdash; ${dur(sleepGaps.sec)} in total that the machine sat awake ` +
+      `at ${num(idleW(), 0)} W with nothing queued. A sleep-after-${SLEEP_AFTER_MIN}-minutes power ` +
+      `policy would have slept through exactly that time: ${fmtMoney(sleepSave)} over this window, ` +
+      `or roughly <strong>${fmtMoney(monthly)}/month</strong> if the same rhythm held all month. ` +
+      `The monthly figure is an extrapolation from ${dur(windowSec)} of observation, not a ` +
+      `measurement, and it counts sleep draw as zero &mdash; real sleep still sips a few watts.`,
+      "idle-policy"]);
+  }
+
   if (rateGroups.length >= 2) {
     const f = rateGroups[0], s = rateGroups[rateGroups.length - 1];
     const ctxDiffers = f.ctx && s.ctx && f.ctx !== s.ctx;
@@ -577,8 +617,9 @@ function paintFindings() {
     `&mdash; differing only in a parameters layer. Summing the reported tag sizes double-counts ` +
     `${gib(dedup)} GiB of disk that does not exist.`]);
 
-  document.getElementById("findings").innerHTML = F.map(([kind, ic, h, p]) =>
-    `<div class="finding${kind === "info" ? " info" : ""}">${ic}<div><h3>${h}</h3><p>${p}</p></div></div>`).join("");
+  document.getElementById("findings").innerHTML = F.map(([kind, ic, h, p, fid]) =>
+    `<div class="finding${kind === "info" ? " info" : ""}"${fid ? ` data-finding="${fid}"` : ""}>${ic}` +
+    `<div><h3>${h}</h3><p>${p}</p></div></div>`).join("");
 }
 
 /* =================== chart: cumulative spend =================== */
@@ -865,6 +906,16 @@ function chartModel() {
 }
 
 /* =================== chart: cost per million tokens =================== */
+/* Hosted-API reference, $ per million GENERATED tokens. ILLUSTRATIVE ONLY:
+   three generic tiers for scale, deliberately naming no vendor and claiming
+   no current price - hosted rates span orders of magnitude and change often.
+   Edit these to match offers you actually use. */
+const HOSTED_REF = [
+  { tier: "Hosted API — small model",          usdPerMTok: 0.60 },
+  { tier: "Hosted API — mid-size model",       usdPerMTok: 3.00 },
+  { tier: "Hosted API — frontier-class model", usdPerMTok: 15.00 }
+];
+
 function chartPerMillion() {
   const panel = document.getElementById("p-per");
   if (!rateGroups.length) { panel.hidden = true; return; }
@@ -891,13 +942,36 @@ function chartPerMillion() {
   ft.textContent = `per 1M generated tokens · ${num(activeW(), 0)} W @ ${(RATE * 100).toFixed(1)}¢/kWh`;
   svg.appendChild(ft);
 
+  const hw = hwPerSec > 0;
+  document.getElementById("per-note").textContent = hw
+    ? "Bars are electricity only; the table adds hardware amortization and a hosted-API reference."
+    : "Electricity only, at the rates measured on this machine.";
+
+  /* Best local $/Mtok as the comparison base: rateGroups is sorted fastest
+     first, and watts are flat, so the fastest model is also the cheapest. */
+  const localBest = perMillion(rateGroups[0].avg) + (hw ? perMillionHw(rateGroups[0].avg) : 0);
   document.getElementById("t-per").innerHTML =
-    `<table><caption>Derived from measured throughput and measured GPU draw.</caption><thead><tr>` +
-    `<th>Model</th><th>Tok/s</th><th>Hours / 1M</th><th>kWh / 1M</th><th>Cost / 1M</th></tr></thead><tbody>` +
+    `<table><caption>Derived from measured throughput and measured GPU draw.` +
+    (hw ? ` Incl. hardware spreads the ${fmtMoney(GPU_COST)} GPU over ${GPU_LIFE} years of wall-clock time.` : "") +
+    `</caption><thead><tr>` +
+    `<th>Model</th><th>Tok/s</th><th>Hours / 1M</th><th>kWh / 1M</th><th>Cost / 1M</th>` +
+    (hw ? `<th>Incl. hardware</th>` : "") + `</tr></thead><tbody>` +
     rateGroups.map(g => `<tr><td class="name"><span class="mk" style="background:${mColor(g.key)}"></span>${mLabel(g.key)}</td>` +
       `<td>${g.avg.toFixed(1)}</td><td>${(1e6 / g.avg / 3600).toFixed(2)}</td>` +
       `<td>${((1e6 / g.avg) * activeW() / 3600 / 1000).toFixed(3)}</td>` +
-      `<td>${fmtMoney(perMillion(g.avg))}</td></tr>`).join("") + `</tbody></table>`;
+      `<td>${fmtMoney(perMillion(g.avg))}</td>` +
+      (hw ? `<td>${fmtMoney(perMillion(g.avg) + perMillionHw(g.avg))}</td>` : "") +
+      `</tr>`).join("") + `</tbody></table>` +
+    `<table data-ref="hosted" style="margin-top:10px"><caption>Illustrative hosted-API reference &mdash; ` +
+    `generic tiers, not any vendor's current prices; edit <code>HOSTED_REF</code> in this file to match ` +
+    `offers you actually use. Local best = ${mLabel(rateGroups[0].key)} at ${fmtMoney(localBest)}` +
+    (hw ? ` incl. hardware.`
+        : ` for electricity alone &mdash; hosted prices also carry hardware, so the multiple flatters local.`) +
+    `</caption><thead><tr>` +
+    `<th>Reference tier</th><th>$ / 1M</th><th>vs local best</th></tr></thead><tbody>` +
+    HOSTED_REF.map(h => `<tr><td class="name">${h.tier}</td><td>${fmtMoney(h.usdPerMTok)}</td>` +
+      `<td>${localBest > 0 ? (h.usdPerMTok / localBest).toFixed(1) + "x" : "—"}</td></tr>`).join("") +
+    `</tbody></table>`;
 }
 
 /* =================== chart: clients & endpoints =================== */
