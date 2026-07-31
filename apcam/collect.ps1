@@ -21,9 +21,9 @@
 # any non-ASCII literal is silently corrupted at parse time. That already broke a
 # microsecond regex once; it now uses a \u escape.
 param(
-    [string]$OutFile     = "$PSScriptRoot\dataset.json",
-    [string]$HistoryFile = "$PSScriptRoot\history.json",
-    [string]$MachineFile = "$PSScriptRoot\machine.json",
+    [string]$OutFile     = (Join-Path $PSScriptRoot 'dataset.json'),
+    [string]$HistoryFile = (Join-Path $PSScriptRoot 'history.json'),
+    [string]$MachineFile = (Join-Path $PSScriptRoot 'machine.json'),
     [string]$LogDir      = '',
     [string]$ModelDir    = '',
     [string]$Endpoint    = 'http://localhost:11434',
@@ -39,14 +39,26 @@ Confirm-ParentDir $OutFile
 Confirm-ParentDir $HistoryFile
 
 # ---------------- platform defaults ----------------
+# $IsWindows/$IsLinux/$IsMacOS do not exist in Windows PowerShell 5.1 (they read
+# as $null there), so test the edition first and only trust them under Core.
+$onWindows = ($PSVersionTable.PSEdition -ne 'Core') -or ($IsWindows -eq $true)
+$onLinux   = ($IsLinux -eq $true)
+
+$LogDirGiven = [bool]$LogDir
 if (-not $LogDir) {
-    # Windows desktop app. The Linux service logs to journald and macOS to
-    # ~/.ollama/logs - see README for why those are not wired up yet.
-    $LogDir = Join-Path $env:LOCALAPPDATA 'Ollama'
+    if ($onWindows) {
+        # Windows desktop app.
+        $LogDir = Join-Path $env:LOCALAPPDATA 'Ollama'
+    } else {
+        # The macOS app and manual `ollama serve 2>...` runs log here. The Linux
+        # systemd service logs to journald instead - handled after the file scan.
+        $LogDir = Join-Path $HOME '.ollama/logs'
+    }
 }
 if (-not $ModelDir) {
     $ModelDir = if ($env:OLLAMA_MODELS) { $env:OLLAMA_MODELS }
-                else { Join-Path $env:USERPROFILE '.ollama\models' }
+                elseif ($onWindows)     { Join-Path $env:USERPROFILE '.ollama\models' }
+                else                    { Join-Path $HOME '.ollama/models' }
 }
 
 # ---------------- machine envelope ----------------
@@ -161,10 +173,30 @@ $reqs    = New-Object System.Collections.ArrayList
 $samples = New-Object System.Collections.ArrayList
 $logFiles = @(Get-ChildItem -Path $LogDir -Filter 'server*.log' -File -EA SilentlyContinue | Sort-Object LastWriteTime)
 
+# The Linux service install logs to journald, not files. If default discovery
+# found nothing, dump the ollama unit (system first, then user) to a temp file
+# shaped like a rotated log, parse that, and delete it after the scan.
+$journalDump = $null
+if (-not $logFiles.Count -and $onLinux -and -not $LogDirGiven -and
+    (Get-Command journalctl -ErrorAction SilentlyContinue)) {
+    $jLines = @(& journalctl -u ollama --no-pager -o cat 2>$null | Where-Object { $_ })
+    if (-not $jLines.Count) {
+        $jLines = @(& journalctl --user-unit ollama --no-pager -o cat 2>$null | Where-Object { $_ })
+    }
+    if ($jLines.Count) {
+        $journalDump = Join-Path ([System.IO.Path]::GetTempPath()) ('apcam-journal-' + [System.Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $journalDump | Out-Null
+        [System.IO.File]::WriteAllLines((Join-Path $journalDump 'server-journald.log'), [string[]]$jLines)
+        $logFiles = @(Get-ChildItem -Path $journalDump -Filter 'server*.log' -File)
+        Write-Output "no server*.log in $LogDir - parsing the ollama journald unit instead ($($jLines.Count) lines)"
+    }
+}
+
 if (-not $logFiles.Count) {
     Write-Warning "no server*.log found in $LogDir - pass -LogDir if Ollama logs elsewhere."
 }
 
+try {
 foreach ($lf in $logFiles) {
     $lineTs   = $null
     $lastLoad = $null
@@ -220,6 +252,9 @@ foreach ($lf in $logFiles) {
         }
     }
 }
+} finally {
+    if ($journalDump) { Remove-Item -Path $journalDump -Recurse -Force -EA SilentlyContinue }
+}
 
 # ---------------- attribute by load timeline ----------------
 $sortedLoads = @($loads | Where-Object { $_.ts } | Sort-Object ts)
@@ -255,12 +290,26 @@ $promptTotal = (($samples | Where-Object { $_.PSObject.Properties.Name -contains
 if (-not $promptTotal) { $promptTotal = 0 }
 
 # ---------------- merge into persistent history ----------------
+# pwsh 7's ConvertFrom-Json revives ISO date strings as [datetime] (5.1 keeps
+# them as strings). Left alone, a revived start/ts stringifies culture-style, so
+# its dedupe key never matches the freshly parsed entry and every run appends a
+# full duplicate. Pin them back to the ISO string form; on 5.1 this is a no-op.
+function Format-HistTs($v) {
+    if ($v -is [datetime]) { return $v.ToString('yyyy-MM-ddTHH:mm:ss') }
+    return "$v"
+}
 $hist = @{ events = @{}; rates = @{} }
 if (Test-Path $HistoryFile) {
     try {
         $prev = Get-Content $HistoryFile -Raw | ConvertFrom-Json
-        foreach ($e in $prev.events) { $hist.events["$($e.start)|$($e.path)|$($e.client)|$($e.dur)"] = $e }
-        foreach ($r in $prev.rates)  { $hist.rates["$($r.ts)|$($r.tps)|$($r.gen)"] = $r }
+        foreach ($e in $prev.events) {
+            $e.start = Format-HistTs $e.start
+            $hist.events["$($e.start)|$($e.path)|$($e.client)|$($e.dur)"] = $e
+        }
+        foreach ($r in $prev.rates) {
+            $r.ts = Format-HistTs $r.ts
+            $hist.rates["$($r.ts)|$($r.tps)|$($r.gen)"] = $r
+        }
     } catch { Write-Warning "could not read history, starting fresh: $_" }
 }
 $beforeE = $hist.events.Count; $beforeR = $hist.rates.Count
@@ -302,6 +351,13 @@ $gpuIdx = 0
 if ($machine.PSObject.Properties.Name -contains 'gpuIndex' -and $null -ne $machine.gpuIndex) {
     $gpuIdx = [int]$machine.gpuIndex
 }
+# Live snapshot exists only for the nvidia path ('unknown' covers machine.json
+# files from before gpuVendor and degrades to null exactly as it always did).
+$gpuVendorNow = ''
+if ($machine.PSObject.Properties.Name -contains 'gpuVendor' -and $machine.gpuVendor) {
+    $gpuVendorNow = "$($machine.gpuVendor)"
+}
+if ($gpuVendorNow -in @('', 'nvidia', 'unknown')) {
 try {
     $raw = & nvidia-smi -i $gpuIdx --query-gpu=power.draw,utilization.gpu,memory.used,memory.total,temperature.gpu `
                         --format=csv,noheader,nounits 2>$null
@@ -312,6 +368,7 @@ try {
                                      vramUsed=[double]$p[2]; vramTotal=[double]$p[3]; temp=[double]$p[4] }
     }
 } catch { }
+}
 
 $out = [pscustomobject]@{
     schema      = 1

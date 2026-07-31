@@ -129,11 +129,23 @@ Nothing is transmitted anywhere. The page is a local file.
 
 | | |
 |---|---|
-| **Windows + NVIDIA** | Supported. This is what it was built and tested against (Ollama 0.32.5). Multi-GPU boxes: calibrate one card with `.\calibrate.ps1 -GpuIndex N`; collect samples the same card. |
+| **Windows + NVIDIA** | Supported. This is what it was built and tested against (Ollama 0.32.5), on Windows PowerShell 5.1. Multi-GPU boxes: calibrate one card with `.\calibrate.ps1 -GpuIndex N`; collect samples the same card. |
 | **Windows, non-NVIDIA** | Partial. `calibrate.ps1` writes a `machine.json` with null power fields and tells you so; fill in `gpuIdleW` / `gpuActiveW` by hand (a plug meter is the best source) and everything else works. |
-| **Linux / macOS** | Not yet. The log *parsing* is portable, but the entry point is not: the Linux service logs to journald and macOS to `~/.ollama/logs/`, and neither exposes power the way `nvidia-smi` does — Apple Silicon has no comparable per-GPU readout at all. PRs welcome. |
+| **Linux + NVIDIA** | Supported under [PowerShell 7](https://learn.microsoft.com/powershell/scripting/install/installing-powershell) (`pwsh`). `nvidia-smi` sampling is identical to Windows. Logs: `~/.ollama/logs` is tried first; if no `server*.log` turns up, `collect.ps1` dumps the `ollama` journald unit to a temp file and parses that (system unit first, then `--user-unit`; assumes the stock service install; the dump is deleted after the scan). Schedule with `./install-schedule.sh` — a systemd *user* timer, which fires only while you are logged in unless you `loginctl enable-linger`. |
+| **Linux + AMD** | Best-effort. `calibrate.ps1 -GpuVendor amd` probes `amd-smi`, then `rocm-smi`; their JSON layouts drift between ROCm releases, so the probe pattern-matches field names and falls back to the manual-entry path when no power figure comes back. Untested on real AMD hardware — reports welcome. |
+| **macOS (Apple Silicon)** | Supported with caveats, under PowerShell 7. GPU power comes from `powermetrics`, which only talks to root: calibrate with `sudo pwsh -NoProfile -File calibrate.ps1` (without root it degrades to the manual-entry path and says so). The figure is the Apple GPU rail only — CPU and ANE draw are excluded — and unified memory means there is no VRAM number. Intel Macs print no `GPU Power` lines and land on the manual path. Logs: `~/.ollama/logs`. Schedule with `./install-schedule.sh` — a launchd agent, missed slots run on wake. |
 
-`collect.ps1 -LogDir <path>` overrides log discovery if your install differs.
+`collect.ps1 -LogDir <path>` overrides log discovery everywhere if your install differs.
+`calibrate.ps1 -GpuVendor nvidia|amd|apple|none` overrides GPU vendor detection
+(default: `apple` on macOS, `nvidia` everywhere else). On Linux/macOS run the scripts as
+`pwsh ./collect.ps1`; on Windows they still run under stock PowerShell 5.1.
+
+**Wall power from a smart plug.** If the machine is on a Tasmota or Shelly plug,
+`calibrate.ps1 -PlugUrl http://<plug-ip>` samples the plug's local HTTP API during the
+idle and load phases and records `wallIdleW` / `wallActiveW` in `machine.json` — actual
+outlet draw alongside the GPU-only figures. The API flavor is auto-detected
+(`-PlugType tasmota|shelly` pins it); an unreachable plug warns and is skipped. Local
+HTTP only — nothing leaves your LAN.
 
 ### A standing caveat
 

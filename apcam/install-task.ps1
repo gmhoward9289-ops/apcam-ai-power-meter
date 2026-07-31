@@ -16,6 +16,18 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+# $IsWindows does not exist in Windows PowerShell 5.1 (it reads as $null there),
+# so test the edition first and only trust it under Core.
+$onWindows = ($PSVersionTable.PSEdition -ne 'Core') -or ($IsWindows -eq $true)
+if (-not $onWindows) {
+    Write-Warning "install-task.ps1 registers a Windows scheduled task, and this is not Windows."
+    Write-Warning "Use the shell twin instead - it installs a systemd user timer (Linux) or a"
+    Write-Warning "launchd agent (macOS) with the same defaults:"
+    Write-Warning "    ./install-schedule.sh            # 09:00 and 21:00"
+    Write-Warning "    ./install-schedule.sh -h         # custom times, uninstall"
+    exit 1
+}
+
 if ($Uninstall) {
     if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
