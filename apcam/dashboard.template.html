@@ -396,6 +396,26 @@ const pageLabel = (ds, i) => ds.label || (ds.machine || {}).host ||
 /* Sliders are per-page: each machine keeps its own rate / system-draw / CO2
    settings, seeded from its own dataset. Defaults match the markup. */
 const CTL = PAGES.map(ds => ({ rate: "17", sysw: String((ds.machine || {}).systemWatts ?? 70), co2: "370" }));
+
+/* Slider settings persist across visits via localStorage, keyed by page label.
+   This is a static, serverless file, so there is no server to round-trip a
+   cookie to — localStorage is the client-side equivalent that actually works
+   here, including when the page is opened straight from disk. */
+const SETTINGS_KEY = "apcam-settings";
+function loadSettings() {
+  try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { return {}; }
+}
+function saveSettings(all) {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(all)); } catch {}
+}
+(function restoreSettings() {
+  const saved = loadSettings();
+  PAGES.forEach((ds, i) => {
+    const s = saved[pageLabel(ds, i)];
+    if (s) Object.assign(CTL[i], s);
+  });
+})();
+
 let PAGE = 0;
 let repaintPage = () => {};
 let resizePage = () => {};
@@ -1205,6 +1225,9 @@ document.querySelectorAll("[data-toggle]").forEach(b => {
     c.rate = document.getElementById("rate").value;
     c.sysw = document.getElementById("sysw").value;
     c.co2 = document.getElementById("co2").value;
+    const saved = loadSettings();
+    saved[pageLabel(PAGES[PAGE], PAGE)] = { rate: c.rate, sysw: c.sysw, co2: c.co2 };
+    saveSettings(saved);
     repaintPage();
     if (MULTI) paintCombined();
   }));
