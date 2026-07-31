@@ -338,7 +338,7 @@ pre code { background: none; border: 0; padding: 0; }
       <li><strong>Estimated:</strong> non-GPU system draw (the slider), the CO&#8322; factor (grid carbon intensity varies by region and hour; the slider is a flat average), and the assumption that the GPU holds its sustained wattage for a whole request. Short requests spend part of their time loading weights at lower draw, so their energy is mildly over-stated.</li>
       <li><strong>Rates are per model, not per request.</strong> The runner's internal task ids are non-contiguous and do not map one-to-one onto HTTP requests, so pairing a rate to a request would be guesswork. Rates are attributed only to the model loaded at the time, which the load timeline does establish.</li>
       <li><strong>Some tags cannot be told apart.</strong> Tags sharing a weights blob differ only in a parameters layer and are indistinguishable in the logs, so they appear as one entity.</li>
-      <li><strong>Not measured:</strong> wall power. A plug meter is the only way to close the gap between the GPU figure and what the outlet actually delivers.</li>
+      <li><strong>Not measured:</strong> wall power, unless calibration used a smart plug (<code>-PlugUrl</code>). Otherwise only the GPU is instrumented and the gap to the outlet stays open.</li>
       <li><strong>Privacy:</strong> client addresses are reduced to a class and a short hash at capture time. The raw address is never written to disk.</li>
     </ul>
     <p id="staleness"></p>

@@ -5,9 +5,9 @@
 #
 # KEEP THIS FILE PURE ASCII - PowerShell 5.1 reads .ps1 as ANSI without a BOM.
 param(
-    [string]$Template = "$PSScriptRoot\dashboard.template.html",
-    [string]$Dataset  = "$PSScriptRoot\dataset.json",
-    [string]$OutFile  = "$PSScriptRoot\dashboard.html",
+    [string]$Template = (Join-Path $PSScriptRoot 'dashboard.template.html'),
+    [string]$Dataset  = (Join-Path $PSScriptRoot 'dataset.json'),
+    [string]$OutFile  = (Join-Path $PSScriptRoot 'dashboard.html'),
     [switch]$Open     # open the finished page in the default browser
 )
 $ErrorActionPreference = 'Stop'

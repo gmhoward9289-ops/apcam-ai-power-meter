@@ -97,7 +97,7 @@ which ones to trust.
 |---|---|
 | **Measured** | GPU watts, VRAM, temperature. Request start, duration, status, endpoint, client class. Generation rates. Model inventory and on-disk size. |
 | **Estimated** | Non-GPU system draw (the slider, default 70 W). And the assumption that the GPU holds sustained wattage for a whole request — short requests spend part of their time loading weights at lower draw, so their energy is mildly over-stated. |
-| **Not measured** | Wall power. Only the GPU is instrumented; a plug meter is the sole way to close the gap between the GPU figure and what the outlet delivers. |
+| **Not measured** | Wall power, unless you calibrate with a smart plug (`calibrate.ps1 -PlugUrl <addr>`, Tasmota/Shelly), which records `wallIdleW`/`wallActiveW`. Without one, only the GPU is instrumented and the gap to the outlet stays open. |
 
 ### Optional: hardware amortization
 
