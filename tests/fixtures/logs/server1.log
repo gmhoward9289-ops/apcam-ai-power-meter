@@ -1,0 +1,16 @@
+time=2026-03-14T09:29:58.812-04:00 level=INFO source=images.go:432 msg="total blobs: 6"
+time=2026-03-14T09:29:58.815-04:00 level=INFO source=images.go:439 msg="total unused blobs removed: 0"
+time=2026-03-14T09:29:58.820-04:00 level=INFO source=routes.go:1297 msg="Listening on 127.0.0.1:11434 (version 0.32.5)"
+[GIN] 2026/03/14 - 09:29:59 | 200 |     512.75µs |       127.0.0.1 | GET      "/api/version"
+time=2026-03-14T09:30:00.190-04:00 level=INFO source=server.go:637 msg="starting llama server" cmd="ollama runner --model C:\\Users\\ci\\.ollama\\models\\blobs\\sha256-c3d4e5f6a7b80000000000000000000000000000000000000000000000000000 --ctx-size 2048 --batch-size 512 --n-gpu-layers 17 --port 52233"
+llama_model_loader: loaded meta data with 25 key-value pairs and 147 tensors from C:\Users\ci\.ollama\models\blobs\sha256-c3d4e5f6a7b80000000000000000000000000000000000000000000000000000 (version GGUF V3 (latest))
+load_model: loading model 'C:\Users\ci\.ollama\models\blobs\sha256-c3d4e5f6a7b80000000000000000000000000000000000000000000000000000'
+llama_context: n_ctx         = 2048
+llama_context: n_batch       = 512
+time=2026-03-14T09:30:02.532-04:00 level=INFO source=server.go:626 msg="llama runner started in 2.34 seconds"
+slot launch_slot_: id  0 | task 0 | processing task
+slot update_slots: id  0 | task 0 | new prompt, n_ctx_slot = 2048, n_keep = 0, task.n_tokens = 12
+time=2026-03-14T09:30:20.001-04:00 level=INFO source=sched.go:407 msg="synthetic fixture heartbeat"
+slot print_timing: id  0 | task 0 | n_decoded = 50, tg = 61.40 t/s
+[GIN] 2026/03/14 - 09:30:25 | 200 |   22.8163041s |    100.115.92.7 | POST     "/api/chat"
+[GIN] 2026/03/14 - 09:30:26 | 200 |      1.104ms |    100.115.92.7 | GET      "/api/ps"

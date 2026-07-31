@@ -69,6 +69,16 @@ Before sharing a generated page, sanity-check it:
 node verify.js         # runs the page's JS against a DOM stub; catches a broken build
 ```
 
+The parser has regression tests of its own: synthetic `server*.log` fixtures under
+`tests/fixtures/` are run through `collect.ps1` and the emitted dataset is asserted
+field by field, so a llama-server format change fails in CI rather than going quietly
+dark (see [A standing caveat](#a-standing-caveat)). CI runs them on every push;
+locally:
+
+```powershell
+pwsh tests/run-parser-tests.ps1     # works on Windows PowerShell 5.1 too
+```
+
 There is a synthetic dataset in `sample/` if you want to see the page before collecting
 anything of your own:
 
