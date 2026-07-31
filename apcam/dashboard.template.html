@@ -2,13 +2,14 @@
 
 <style>
 /* ============================== tokens ============================== */
+/* Blackwater scheme - canonical values in portal/swamp-tokens.css */
 :root {
   color-scheme: light;
-  --page: #f2f4f6; --surface: #ffffff; --sunken: #f7f8f9;
-  --ink: #0e1116; --ink-2: #4a5157; --muted: #858c93;
-  --grid: #e3e6e9; --rule: #d6dade; --bezel: rgba(14,17,22,0.10);
+  --page: #eef1ef; --surface: #f9fbfa; --sunken: #e9edeb;
+  --ink: #16211f; --ink-2: #5d6e69; --muted: #7d8a85;
+  --grid: #e1e7e4; --rule: #d8dfdc; --bezel: rgba(22,33,31,0.10);
   --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
-  --good: #0ca30c; --warning: #fab219; --critical: #d03b3b;
+  --good: #1a7a5e; --warning: #b8860b; --critical: #c04040;
   --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", monospace;
   --r: 3px;
@@ -16,25 +17,28 @@
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
     color-scheme: dark;
-    --page: #0b0e11; --surface: #14181c; --sunken: #101418;
-    --ink: #f2f5f7; --ink-2: #a8b1b8; --muted: #7d858c;
-    --grid: #232a30; --rule: #2b3238; --bezel: rgba(242,245,247,0.12);
+    --page: #0e1214; --surface: #161c1f; --sunken: #11171a;
+    --ink: #dce4e2; --ink-2: #7f9089; --muted: #6e7d77;
+    --grid: #232d2f; --rule: #263133; --bezel: rgba(220,228,226,0.12);
     --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --good: #6fc4b1; --warning: #e8b13f; --critical: #ee8f8f;
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --page: #0b0e11; --surface: #14181c; --sunken: #101418;
-  --ink: #f2f5f7; --ink-2: #a8b1b8; --muted: #7d858c;
-  --grid: #232a30; --rule: #2b3238; --bezel: rgba(242,245,247,0.12);
+  --page: #0e1214; --surface: #161c1f; --sunken: #11171a;
+  --ink: #dce4e2; --ink-2: #7f9089; --muted: #6e7d77;
+  --grid: #232d2f; --rule: #263133; --bezel: rgba(220,228,226,0.12);
   --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  --good: #6fc4b1; --warning: #e8b13f; --critical: #ee8f8f;
 }
 :root[data-theme="light"] {
   color-scheme: light;
-  --page: #f2f4f6; --surface: #ffffff; --sunken: #f7f8f9;
-  --ink: #0e1116; --ink-2: #4a5157; --muted: #858c93;
-  --grid: #e3e6e9; --rule: #d6dade; --bezel: rgba(14,17,22,0.10);
+  --page: #eef1ef; --surface: #f9fbfa; --sunken: #e9edeb;
+  --ink: #16211f; --ink-2: #5d6e69; --muted: #7d8a85;
+  --grid: #e1e7e4; --rule: #d8dfdc; --bezel: rgba(22,33,31,0.10);
   --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --good: #1a7a5e; --warning: #b8860b; --critical: #c04040;
 }
 
 * { box-sizing: border-box; }
