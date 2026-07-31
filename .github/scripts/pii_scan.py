@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Layer-2 scan: public IPs, emails, credentialed connection strings, and
 credential-shaped filenames, across full git history (default), staged
-changes (--staged), or explicit files (--files). Complements gitleaks."""
+changes (--staged), or explicit files (--files). Complements gitleaks.
+
+Exit codes: 0 clean, 1 findings, 2 could-not-check (e.g. shallow clone).
+Never treat 2 as clean - it means the history the scan promises was not there."""
 
 import argparse
 import ipaddress
@@ -181,6 +184,13 @@ def main():
             except subprocess.CalledProcessError:
                 pass
     else:
+        # A shallow clone makes rev-list --all silently return only the grafted
+        # tip; reporting "clean" on that would be a safety assertion the scan
+        # never earned. Distinct exit code so callers can't mistake it for 0.
+        if git(a.repo, "rev-parse", "--is-shallow-repository").strip() == b"true":
+            print("pii_scan: FATAL - shallow clone; history cannot be scanned.", file=sys.stderr)
+            print("  Re-clone with full history, or use actions/checkout with fetch-depth: 0.", file=sys.stderr)
+            sys.exit(2)
         order, path_of, sizes, all_paths = history_blobs(a.repo)
         for path in set(all_paths):
             if CRED_NAME.search(path) and not CRED_NAME_OK.search(path) and not SKIP_PATH.search(path):
