@@ -20,6 +20,10 @@
 # KEEP THIS FILE PURE ASCII - PowerShell 5.1 reads .ps1 as ANSI without a BOM, so
 # any non-ASCII literal is silently corrupted at parse time. That already broke a
 # microsecond regex once; it now uses a \u escape.
+#
+# -Source selects the runtime adapter. The default, ollama, is the path below and
+# is unchanged; the other adapters live in sources/*.ps1 and are dispatched to
+# right after the shared helpers are defined (see "source dispatch").
 param(
     [string]$OutFile     = (Join-Path $PSScriptRoot 'dataset.json'),
     [string]$HistoryFile = (Join-Path $PSScriptRoot 'history.json'),
@@ -27,7 +31,10 @@ param(
     [string]$LogDir      = '',
     [string]$ModelDir    = '',
     [string]$Endpoint    = 'http://localhost:11434',
-    [switch]$KeepRawClients   # opt out of anonymisation for local-only debugging
+    [switch]$KeepRawClients,  # opt out of anonymisation for local-only debugging
+    [ValidateSet('ollama','llamacpp','vllm','lmstudio')]
+    [string]$Source      = 'ollama',
+    [string]$MetricsFile = ''   # vllm only: parse a saved /metrics scrape instead of HTTP
 )
 $ErrorActionPreference = 'Continue'
 
@@ -119,6 +126,37 @@ function Get-ClientLabel([string]$addr) {
         $a.StartsWith('fe80:') -or $a.StartsWith('fc') -or $a.StartsWith('fd')
     $h = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($a))).Replace('-','').ToLower()
     return ($(if ($isPrivate) { 'lan-' } else { 'external-' }) + $h.Substring(0,4))
+}
+
+# ---------------- source dispatch ----------------
+# Non-ollama adapters live in sources/<name>.ps1. They are dot-sourced here so
+# they inherit everything defined above - the platform flags, the machine
+# envelope, Read-SharedLines and, critically, Get-ClientLabel, so client
+# anonymisation is byte-identical in every adapter. Each adapter does its own
+# scan, history handling and dataset write, then execution returns here and
+# stops. Everything below this block is the unchanged ollama path.
+if ($Source -eq 'lmstudio') {
+    Write-Error ("-Source lmstudio is not implemented. LM Studio's server log is a console " +
+        "mirror with no documented stable format, so parsing it would be guesswork - and a " +
+        "missing adapter beats a wrong one. If your LM Studio install exposes the underlying " +
+        "llama.cpp server log, -Source llamacpp may work against that file.")
+    return
+}
+if ($Source -ne 'ollama') {
+    # per-source defaults for anything not set explicitly on the command line
+    if (-not $PSBoundParameters.ContainsKey('Endpoint')) {
+        $Endpoint = if ($Source -eq 'vllm') { 'http://localhost:8000' } else { 'http://localhost:8080' }
+    }
+    if (-not $PSBoundParameters.ContainsKey('OutFile')) {
+        $OutFile = Join-Path $PSScriptRoot ('dataset.' + $Source + '.json')
+        Confirm-ParentDir $OutFile
+    }
+    if (-not $PSBoundParameters.ContainsKey('HistoryFile')) {
+        $HistoryFile = Join-Path $PSScriptRoot ('history.' + $Source + '.json')
+        Confirm-ParentDir $HistoryFile
+    }
+    . (Join-Path $PSScriptRoot (Join-Path 'sources' ($Source + '.ps1')))
+    return
 }
 
 # ---------------- digest -> entity name, from the manifests ----------------

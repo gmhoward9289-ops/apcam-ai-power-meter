@@ -126,6 +126,94 @@ would be floors masquerading as counts.
 
 ---
 
+## Sources
+
+`collect.ps1 -Source <name>` selects the runtime adapter. The default is `ollama` and
+its behavior is unchanged — a dataset collected without `-Source` is identical to one
+collected before adapters existed (and carries no `source` key; adapter datasets add a
+top-level `source`). Non-ollama sources write to `dataset.<source>.json` /
+`history.<source>.json` by default so streams never mix; every adapter applies the
+same client anonymisation, and all of them still need `machine.json` from
+`calibrate.ps1` for the power envelope.
+
+| Source | Input | What you get |
+|---|---|---|
+| `ollama` (default) | Ollama's `server*.log` + manifests + API | Everything described above. |
+| `llamacpp` | A captured `llama-server` stderr log (`-LogDir <dir-or-file>`) | Requests (no durations), per-task timings and rates, exact evaluated-prompt and generated-token counts for completed tasks. |
+| `vllm` | Prometheus `/metrics` scrape (`-Endpoint`, default `http://localhost:8000`, or `-MetricsFile <saved scrape>`) | Exact aggregate token/request counters and latency sums — no per-request timeline. |
+| `lmstudio` | — | Not implemented: LM Studio's server log is a console mirror with no documented stable format, and a missing adapter beats a guessed one. If your install exposes the underlying llama.cpp engine log, `-Source llamacpp` may work on that file. |
+
+### llama.cpp (`-Source llamacpp`)
+
+```powershell
+.\collect.ps1 -Source llamacpp -LogDir C:\logs\llama    # scans *.log; a single file works too
+```
+
+`llama-server` logs to stderr and has no log directory of its own, so capture it first
+(`llama-server ... 2>>llama.log`, `journalctl -u <unit> -o short-iso > llama.log`, or
+`docker logs -t`). Honest limits, straight from what the log actually contains:
+
+- **Request lines have no duration and no timestamp.** `srv  log_server_r: request:
+  POST /v1/chat/completions <addr> <status>` gives method/path/client/status only, so
+  events carry `dur = 0` (a number, so existing consumers keep working — not a
+  measurement) — and llama.cpp demoted the line to trace level in Nov 2025, so on
+  newer builds there are no request lines at all and only timings and rates remain.
+  Busy time comes from the per-task `total time` rows instead (`busySeconds` in the
+  dataset), which is also what the energy figure uses.
+- **Wall-clock time only exists if a wrapper stamped the lines** (journald
+  `-o short-iso`, `docker logs -t`, `ts`). llama.cpp's own `--log-timestamps` prints
+  time since start, which is not a clock. Unstamped logs still parse, but events and
+  rates carry no time and are not merged into the history file — the dataset is then a
+  snapshot of the scanned logs, and the run says so.
+- **One model per process:** attribution needs no load-timeline join; everything after
+  a `load_model:` line belongs to that model. Inventory is names only (no manifests to
+  read — sizes are null, `diskBytes` is null).
+- `promptTokens` counts **evaluated** prefill tokens (prompt-cache hits excluded),
+  falling back to the announced prompt size for tasks that never printed a timing
+  block; ollama's figure is the full prompt size. `generationTokens` sums final eval
+  rows, so it covers completed tasks only. Both the pre-Nov-2025 single-block timing
+  format and the current per-row format are parsed, as are the periodic
+  `n_decoded ... tg = N t/s` progress rows (same dedupe rule as the ollama path:
+  one sample per task, final count wins, first timestamp kept).
+
+### vLLM (`-Source vllm`)
+
+```powershell
+.\collect.ps1 -Source vllm                       # scrapes http://localhost:8000/metrics
+.\collect.ps1 -Source vllm -MetricsFile snap.txt # or parse a saved scrape offline
+```
+
+vLLM is scraped, not parsed: `/metrics` exposes exact cumulative counters, which is
+both better and worse than logs, and the dataset represents that honestly rather than
+faking events:
+
+- **Token counts are exact.** `vllm:prompt_tokens_total` / `vllm:generation_tokens_total`
+  are true counters — the ~50-token reporting floor that applies to the log-parsing
+  sources does not exist here.
+- **There is no per-request timeline** — no start times, durations, or client
+  addresses — so `events` and `rates` stay empty and the real data lands in a
+  top-level `aggregates` block: per-model token/request totals (with
+  `finished_reason` breakdown), latency sums and true averages (e2e, queue, TTFT,
+  per-output-token → `decodeTokPerSec`), running/waiting gauges and KV-cache usage.
+  Both v1 metric names (`vllm:kv_cache_usage_perc`, `vllm:inter_token_latency_seconds`)
+  and their v0 predecessors are understood.
+- **Busy time is summed request-seconds** — RUNNING-phase time where the deployment
+  exposes it, end-to-end time (queueing included) otherwise; `busySource` says which.
+  Requests overlap under continuous batching, so treat energy computed from it as an
+  upper bound.
+- **Counters reset when the server restarts.** Each run appends a snapshot to the
+  history file (unchanged counters are not re-appended), so deltas between snapshots
+  are exact interval usage; a counter that went backwards means a restart.
+
+Adapter status: both new adapters are **fixture-verified** — the log and metrics
+shapes were derived from llama.cpp's and vLLM's own source across format eras, and
+pinned by the regression tests, but they have not been run against live servers here.
+The ollama path remains the only one exercised against a real deployment. Adapters run
+under PowerShell 7; they are written to Windows PowerShell 5.1's dialect
+(parse-checked there), while day-to-day 5.1 use remains tested for the ollama path.
+
+---
+
 ## Privacy
 
 The repo is structured so captured telemetry never lands in git:

@@ -256,6 +256,248 @@ Assert-Eq 'run 2 raw event count (re-scan adds nothing)' 6 @($data2.events).Coun
 Assert-Eq 'run 2 raw rate count (re-scan adds nothing)'  4 @($data2.rates).Count
 Assert-Eq 'run 2 prompt token total' 707 $data2.promptTokens
 
+# ===================== runtime-adapter sections (issue #4) =====================
+# Everything below was APPENDED for the -Source adapters; the 82 assertions
+# above are the unchanged gate for the default ollama path. These sections use
+# the same helpers and stay hermetic: fixture logs and canned /metrics scrapes,
+# with the Endpoint still pointing at a refusing port.
+
+function Invoke-CollectSrc([hashtable]$p, [string]$outFile, [string]$label) {
+    Write-Host ""
+    Write-Host "--- collect.ps1 $label ---"
+    $log = & $collect @p -OutFile $outFile *>&1
+    $log | ForEach-Object { Write-Host ("  | {0}" -f $_) }
+    if (-not (Test-Path $outFile)) {
+        Write-Host "FATAL collect.ps1 wrote no dataset at $outFile"
+        exit 1
+    }
+    try { return (Get-Content $outFile -Raw | ConvertFrom-Json) }
+    catch { Write-Host "FATAL $outFile is not valid JSON: $_"; exit 1 }
+}
+
+# ---------------- the ollama dataset is untouched by adapter work ----------------
+# The new adapters emit a top-level "source" key; the default ollama dataset
+# must NOT gain one (or anything else) - its output is pinned byte-for-byte
+# minus generatedAt against pre-adapter collect.ps1.
+Assert-Eq 'ollama dataset run 1 carries no source key' `
+    0 @($data.PSObject.Properties | Where-Object { $_.Name -ceq 'source' }).Count
+Assert-Eq 'ollama dataset run 2 carries no source key' `
+    0 @($data2.PSObject.Properties | Where-Object { $_.Name -ceq 'source' }).Count
+
+# ---------------- llamacpp: timestamped logs ----------------
+# Fixture A: pre-Nov-2025 llama-server behind docker-style per-line ISO stamps,
+# with INFO request lines and the old one-call timing block (bare continuation
+# rows). Fixture B: current llama-server behind journald short-iso (host and
+# unit prefix), no request lines, per-row-prefixed timing block plus periodic
+# n_decoded progress rows. Same client addresses as the ollama fixtures, so the
+# hashed labels must come out identical (shared anonymiser).
+$lcHist1  = Join-Path $tmp 'history.llamacpp-iso.json'
+$lcCommon = @{
+    Source      = 'llamacpp'
+    LogDir      = Join-Path $fixtures (Join-Path 'llamacpp' 'logs-iso')
+    MachineFile = Join-Path $fixtures 'machine.fixture.json'
+    HistoryFile = $lcHist1
+    Endpoint    = 'http://127.0.0.1:9'
+}
+$lc1 = Invoke-CollectSrc $lcCommon (Join-Path $tmp 'dataset.lc1.json') 'llamacpp run 1 (iso logs, fresh history)'
+Write-Host ""
+
+Assert-Eq 'lc: schema'      1          $lc1.schema
+Assert-Eq 'lc: source'      'llamacpp' $lc1.source
+Assert-Eq 'lc: serverUp (refused endpoint)' 'False' $lc1.serverUp
+Assert-Eq 'lc: anonymised'  'True'     $lc1.anonymised
+Assert-Eq 'lc: diskBytes null (no blob store)' '' "$($lc1.diskBytes)"
+Assert-Eq 'lc: sharedBlobs empty' 0 @($lc1.sharedBlobs).Count
+Assert-Eq 'lc: tagDigest empty'   0 @($lc1.tagDigest.PSObject.Properties).Count
+Assert-Eq 'lc: models (one per load line)' 'stubchat-7b-q4_k_m,stubcoder-1b' `
+    ((@($lc1.models) | ForEach-Object { $_.name }) -join ',')
+Assert-Eq 'lc: model sizeBytes null (no manifests)' '' "$((@($lc1.models))[0].sizeBytes)"
+
+# health and props requests must be filtered; the two inference lines kept
+$lcEv = @($lc1.events)
+Assert-Eq 'lc: event count (non-inference paths filtered)' 2 $lcEv.Count
+$e = Find-One $lcEv { $_.path -eq '/v1/chat/completions' } 'lc: E1 lookup (/v1/chat/completions)'
+if ($e) {
+    Assert-Eq 'lc: E1 start (wrapper timestamp, completion moment)' '2026-04-02T08:01:24' (ConvertTo-IsoSecond $e.start)
+    Assert-Eq 'lc: E1 dur is 0 (llama-server logs no duration)' 0 $e.dur
+    Assert-Eq 'lc: E1 status' 200 $e.status
+    Assert-Eq 'lc: E1 client (same RFC1918 addr, same hash as ollama fixture)' 'lan-0647' $e.client
+    Assert-Eq 'lc: E1 model (stamped from load line, path stripped)' 'stubchat-7b-q4_k_m' $e.model
+    Assert-Eq 'lc: E1 ctx' 4096 $e.ctx
+}
+$e = Find-One $lcEv { $_.path -eq '/completion' } 'lc: E2 lookup (/completion 500)'
+if ($e) {
+    Assert-Eq 'lc: E2 start'  '2026-04-02T08:02:31' (ConvertTo-IsoSecond $e.start)
+    Assert-Eq 'lc: E2 status (5xx kept)' 500 $e.status
+    Assert-Eq 'lc: E2 client' 'localhost' $e.client
+}
+
+# rates: fixture A has only the final eval row; fixture B has two progress rows
+# then the final block for the same task -> ONE sample, final figures, first ts
+$lcRt = @($lc1.rates)
+Assert-Eq 'lc: rate sample count' 2 $lcRt.Count
+$r = Find-One $lcRt { $_.model -eq 'stubchat-7b-q4_k_m' } 'lc: R1 lookup (classic eval row)'
+if ($r) {
+    Assert-Eq 'lc: R1 ts'  '2026-04-02T08:01:24' (ConvertTo-IsoSecond $r.ts)
+    Assert-Eq 'lc: R1 tps' '44.9' $r.tps
+    Assert-Eq 'lc: R1 gen' 110 $r.gen
+    Assert-Eq 'lc: R1 ctx' 4096 $r.ctx
+}
+$r = Find-One $lcRt { $_.model -eq 'stubcoder-1b' } 'lc: R2 lookup (progress rows folded)'
+if ($r) {
+    Assert-Eq 'lc: R2 ts (first progress row kept)' '2026-04-02T09:11:09' (ConvertTo-IsoSecond $r.ts)
+    Assert-Eq 'lc: R2 tps (final eval row wins)' '51.81' $r.tps
+    Assert-Eq 'lc: R2 gen (final count, not interim 250)' 272 $r.gen
+    Assert-Eq 'lc: R2 ctx' 8192 $r.ctx
+}
+
+# token totals: prompt-eval rows (45 + 64) preferred over the new-prompt line
+# (52) for the same task; generation sums the final eval rows
+Assert-Eq 'lc: promptTokens (evaluated, prompt-eval preferred)' 109 $lc1.promptTokens
+Assert-Eq 'lc: generationTokens (completed tasks)' 382 $lc1.generationTokens
+Assert-Eq 'lc: busySeconds (sum of total-time rows)' '8.131' $lc1.busySeconds
+Assert-Eq 'lc: busySource' 'task-total-time' $lc1.busySource
+
+# re-scan against the existing history must add nothing (raw counts, same
+# Format-HistTs pin the ollama run 2 asserts)
+$lc2 = Invoke-CollectSrc $lcCommon (Join-Path $tmp 'dataset.lc2.json') 'llamacpp run 2 (re-scan check)'
+Write-Host ""
+Assert-Eq 'lc: run 2 raw event count (re-scan adds nothing)' 2 @($lc2.events).Count
+Assert-Eq 'lc: run 2 raw rate count (re-scan adds nothing)'  2 @($lc2.rates).Count
+
+# ---------------- llamacpp: logs without wall-clock timestamps ----------------
+# A plain `llama-server 2>file` capture: everything still parses, but events
+# and rates carry no start/ts and nothing is persisted to history (no stable
+# identity across runs), so the dataset is a snapshot and re-runs do not grow.
+$lcHist2  = Join-Path $tmp 'history.llamacpp-bare.json'
+$lcBare = @{
+    Source      = 'llamacpp'
+    LogDir      = Join-Path $fixtures (Join-Path 'llamacpp' 'logs-bare')
+    MachineFile = Join-Path $fixtures 'machine.fixture.json'
+    HistoryFile = $lcHist2
+    Endpoint    = 'http://127.0.0.1:9'
+}
+$lc3 = Invoke-CollectSrc $lcBare (Join-Path $tmp 'dataset.lc3.json') 'llamacpp run 3 (bare logs, no timestamps)'
+Write-Host ""
+Assert-Eq 'lc bare: event count' 2 @($lc3.events).Count
+$e = Find-One @($lc3.events) { $_.client -ceq 'lan-9e58' } 'lc bare: E lookup (CGNAT client, hash matches ollama fixture)'
+if ($e) {
+    Assert-Eq 'lc bare: E start is empty (no wall clock in log)' '' "$($e.start)"
+    Assert-Eq 'lc bare: E path'   '/completion' $e.path
+    Assert-Eq 'lc bare: E model'  'stubchat-7b-q4_k_m' $e.model
+    Assert-Eq 'lc bare: E ctx'    2048 $e.ctx
+}
+$r = Find-One @($lc3.rates) { $_.gen -eq 60 } 'lc bare: R lookup'
+if ($r) {
+    Assert-Eq 'lc bare: R ts is empty' '' "$($r.ts)"
+    Assert-Eq 'lc bare: R tps' '60' $r.tps
+}
+Assert-Eq 'lc bare: promptTokens' 10 $lc3.promptTokens
+Assert-Eq 'lc bare: generationTokens' 60 $lc3.generationTokens
+Assert-Eq 'lc bare: busySeconds' '1.08' $lc3.busySeconds
+Assert-Eq 'lc bare: history file NOT written (nothing identifiable to merge)' 'False' (Test-Path $lcHist2)
+$lc4 = Invoke-CollectSrc $lcBare (Join-Path $tmp 'dataset.lc4.json') 'llamacpp run 4 (bare re-run, no growth)'
+Write-Host ""
+Assert-Eq 'lc bare: re-run event count unchanged' 2 @($lc4.events).Count
+Assert-Eq 'lc bare: re-run rate count unchanged'  1 @($lc4.rates).Count
+
+# ---------------- vllm: canned /metrics scrapes ----------------
+# v1 engine exposition: two engine labels for one served model (sums must
+# aggregate), histogram _bucket and prometheus_client _created series to be
+# ignored, non-vllm process metrics, and a labels-but-no-model_name info gauge.
+$vmHist1  = Join-Path $tmp 'history.vllm.json'
+$vmFix    = Join-Path $fixtures 'vllm'
+$vmCommon = @{
+    Source      = 'vllm'
+    MetricsFile = Join-Path $vmFix 'metrics-v1a.prom'
+    MachineFile = Join-Path $fixtures 'machine.fixture.json'
+    HistoryFile = $vmHist1
+}
+$vm1 = Invoke-CollectSrc $vmCommon (Join-Path $tmp 'dataset.vm1.json') 'vllm run 1 (v1 metrics, fresh history)'
+Write-Host ""
+
+Assert-Eq 'vm: schema'     1      $vm1.schema
+Assert-Eq 'vm: source'     'vllm' $vm1.source
+Assert-Eq 'vm: serverUp false for a file scrape' 'False' $vm1.serverUp
+Assert-Eq 'vm: anonymised (no client data exists)' 'True' $vm1.anonymised
+Assert-Eq 'vm: events empty by design'  0 @($vm1.events).Count
+Assert-Eq 'vm: rates empty by design'   0 @($vm1.rates).Count
+Assert-Eq 'vm: loadedNow empty (server not live)' 0 @($vm1.loadedNow).Count
+Assert-Eq 'vm: model inventory from labels' 'stub-org/StubModel-7B-Instruct' `
+    ((@($vm1.models) | ForEach-Object { $_.name }) -join ',')
+Assert-Eq 'vm: promptTokens exact (150000 + 50432 across engines)' 200432 $vm1.promptTokens
+Assert-Eq 'vm: generationTokens exact (61000 + 19345)' 80345 $vm1.generationTokens
+Assert-Eq 'vm: busySeconds (inference sums, engines added)' '4000.25' $vm1.busySeconds
+Assert-Eq 'vm: busySource prefers RUNNING-phase time' 'inference' $vm1.busySource
+
+$ag = @($vm1.aggregates.models)
+Assert-Eq 'vm: one aggregate model entry' 1 $ag.Count
+$a = $ag[0]
+Assert-Eq 'vm: agg requests (finished_reason series summed)' 525 $a.requests
+Assert-Eq 'vm: agg requests by reason: stop'   500 $a.requestsByReason.stop
+Assert-Eq 'vm: agg requests by reason: length' 25  $a.requestsByReason.length
+Assert-Eq 'vm: agg promptTokensCached' 15000 $a.promptTokensCached
+Assert-Eq 'vm: agg running (gauges summed)' 3 $a.requestsRunning
+Assert-Eq 'vm: agg waiting' 1 $a.requestsWaiting
+Assert-Eq 'vm: agg e2eSeconds'   '4700.5' $a.e2eSeconds
+Assert-Eq 'vm: agg queueSeconds' '700.25' $a.queueSeconds
+Assert-Eq 'vm: agg avgE2eSeconds' '8.953' $a.avgE2eSeconds
+Assert-Eq 'vm: agg avgTtftSeconds' '0.1' $a.avgTtftSeconds
+Assert-Eq 'vm: agg avgTpotSeconds (inter_token_latency)' '0.02' $a.avgTpotSeconds
+Assert-Eq 'vm: agg decodeTokPerSec (1/tpot)' '50' $a.decodeTokPerSec
+Assert-Eq 'vm: agg kvCacheUsage (engine average)' '0.3' $a.kvCacheUsage
+Assert-Eq 'vm: snapshot appended' 1 @($vm1.aggregates.snapshots).Count
+
+# identical counters -> no new snapshot; advanced counters -> one more
+$vm2 = Invoke-CollectSrc $vmCommon (Join-Path $tmp 'dataset.vm2.json') 'vllm run 2 (same scrape, no new snapshot)'
+Write-Host ""
+Assert-Eq 'vm: unchanged counters not re-appended' 1 @($vm2.aggregates.snapshots).Count
+$vmCommon.MetricsFile = Join-Path $vmFix 'metrics-v1b.prom'
+$vm3 = Invoke-CollectSrc $vmCommon (Join-Path $tmp 'dataset.vm3.json') 'vllm run 3 (advanced counters)'
+Write-Host ""
+Assert-Eq 'vm: advanced counters append a snapshot' 2 @($vm3.aggregates.snapshots).Count
+Assert-Eq 'vm: promptTokens after advance' 210432 $vm3.promptTokens
+Assert-Eq 'vm: requests after advance' 575 (@($vm3.aggregates.models))[0].requests
+
+# v0-era names: model_name-only labels, gpu_cache_usage_perc,
+# time_per_output_token_seconds, no inference-time histogram -> e2e fallback
+$vmHist0 = Join-Path $tmp 'history.vllm-v0.json'
+$vmV0 = @{
+    Source      = 'vllm'
+    MetricsFile = Join-Path $vmFix 'metrics-v0.prom'
+    MachineFile = Join-Path $fixtures 'machine.fixture.json'
+    HistoryFile = $vmHist0
+}
+$vm0 = Invoke-CollectSrc $vmV0 (Join-Path $tmp 'dataset.vm0.json') 'vllm run 4 (v0-era metric names)'
+Write-Host ""
+Assert-Eq 'vm v0: model'  'stub-v0-model' ((@($vm0.models) | ForEach-Object { $_.name }) -join ',')
+Assert-Eq 'vm v0: promptTokens' 1234 $vm0.promptTokens
+Assert-Eq 'vm v0: generationTokens' 567 $vm0.generationTokens
+Assert-Eq 'vm v0: busySource falls back to e2e' 'e2e' $vm0.busySource
+Assert-Eq 'vm v0: busySeconds' '88.8' $vm0.busySeconds
+$a0 = (@($vm0.aggregates.models))[0]
+Assert-Eq 'vm v0: requests' 10 $a0.requests
+Assert-Eq 'vm v0: avgTpotSeconds (time_per_output_token fallback)' '0.02' $a0.avgTpotSeconds
+Assert-Eq 'vm v0: decodeTokPerSec' '50' $a0.decodeTokPerSec
+Assert-Eq 'vm v0: avgTtftSeconds' '0.2' $a0.avgTtftSeconds
+Assert-Eq 'vm v0: kvCacheUsage (gpu_cache_usage_perc fallback)' '0.15' $a0.kvCacheUsage
+Assert-Eq 'vm v0: running' 1 $a0.requestsRunning
+Assert-Eq 'vm v0: waiting' 0 $a0.requestsWaiting
+
+# ---------------- vllm: refuses to clobber an events-shaped history ----------------
+$vmGuardHist = Join-Path $tmp 'history.vllm-guard.json'
+$guardBody   = '{"events":[],"rates":[]}'
+[System.IO.File]::WriteAllText($vmGuardHist, $guardBody, [System.Text.UTF8Encoding]::new($false))
+$vmGuardOut = Join-Path $tmp 'dataset.vm-guard.json'
+Write-Host ""
+Write-Host "--- collect.ps1 vllm guard run (events-shaped history) ---"
+$guardLog = & $collect -Source vllm -MetricsFile (Join-Path $vmFix 'metrics-v1a.prom') `
+    -MachineFile (Join-Path $fixtures 'machine.fixture.json') `
+    -HistoryFile $vmGuardHist -OutFile $vmGuardOut *>&1
+$guardLog | ForEach-Object { Write-Host ("  | {0}" -f $_) }
+Assert-Eq 'vm guard: dataset NOT written over foreign history' 'False' (Test-Path $vmGuardOut)
+Assert-Eq 'vm guard: history left untouched' $guardBody ([System.IO.File]::ReadAllText($vmGuardHist))
+
 # ---------------- summary ----------------
 Write-Host ""
 if ($script:failed -gt 0) {
