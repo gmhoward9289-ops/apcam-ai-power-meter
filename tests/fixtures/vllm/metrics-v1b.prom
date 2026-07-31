@@ -1,0 +1,81 @@
+# HELP python_gc_objects_collected_total Objects collected during gc
+# TYPE python_gc_objects_collected_total counter
+python_gc_objects_collected_total{generation="0"} 8123.0
+# HELP process_cpu_seconds_total Total user and system CPU time spent in seconds.
+# TYPE process_cpu_seconds_total counter
+process_cpu_seconds_total 512.4
+# HELP vllm:cache_config_info Information of the LLMEngine CacheConfig
+# TYPE vllm:cache_config_info gauge
+vllm:cache_config_info{block_size="16",cache_dtype="auto",num_gpu_blocks="4096"} 1.0
+# HELP vllm:num_requests_running Number of requests in model execution batches.
+# TYPE vllm:num_requests_running gauge
+vllm:num_requests_running{engine="0",model_name="stub-org/StubModel-7B-Instruct"} 2.0
+vllm:num_requests_running{engine="1",model_name="stub-org/StubModel-7B-Instruct"} 1.0
+# HELP vllm:num_requests_waiting Number of requests waiting to be processed.
+# TYPE vllm:num_requests_waiting gauge
+vllm:num_requests_waiting{engine="0",model_name="stub-org/StubModel-7B-Instruct"} 0.0
+vllm:num_requests_waiting{engine="1",model_name="stub-org/StubModel-7B-Instruct"} 1.0
+# HELP vllm:kv_cache_usage_perc Fraction of KV-cache blocks currently in use (from 0 to 1).
+# TYPE vllm:kv_cache_usage_perc gauge
+vllm:kv_cache_usage_perc{engine="0",model_name="stub-org/StubModel-7B-Instruct"} 0.35
+vllm:kv_cache_usage_perc{engine="1",model_name="stub-org/StubModel-7B-Instruct"} 0.25
+# HELP vllm:prompt_tokens_total Number of prefill tokens processed.
+# TYPE vllm:prompt_tokens_total counter
+vllm:prompt_tokens_total{engine="0",model_name="stub-org/StubModel-7B-Instruct"} 160000.0
+vllm:prompt_tokens_total{engine="1",model_name="stub-org/StubModel-7B-Instruct"} 50432.0
+# HELP vllm:prompt_tokens_created Number of prefill tokens processed.
+# TYPE vllm:prompt_tokens_created gauge
+vllm:prompt_tokens_created{engine="0",model_name="stub-org/StubModel-7B-Instruct"} 1.7726e+09
+vllm:prompt_tokens_created{engine="1",model_name="stub-org/StubModel-7B-Instruct"} 1.7726e+09
+# HELP vllm:prompt_tokens_cached_total Number of cached prompt tokens (local + external).
+# TYPE vllm:prompt_tokens_cached_total counter
+vllm:prompt_tokens_cached_total{engine="0",model_name="stub-org/StubModel-7B-Instruct"} 12000.0
+vllm:prompt_tokens_cached_total{engine="1",model_name="stub-org/StubModel-7B-Instruct"} 3000.0
+# HELP vllm:generation_tokens_total Number of generation tokens processed.
+# TYPE vllm:generation_tokens_total counter
+vllm:generation_tokens_total{engine="0",model_name="stub-org/StubModel-7B-Instruct"} 66000.0
+vllm:generation_tokens_total{engine="1",model_name="stub-org/StubModel-7B-Instruct"} 19345.0
+# HELP vllm:request_success_total Count of successfully processed requests.
+# TYPE vllm:request_success_total counter
+vllm:request_success_total{engine="0",finished_reason="stop",model_name="stub-org/StubModel-7B-Instruct"} 450.0
+vllm:request_success_total{engine="0",finished_reason="length",model_name="stub-org/StubModel-7B-Instruct"} 25.0
+vllm:request_success_total{engine="1",finished_reason="stop",model_name="stub-org/StubModel-7B-Instruct"} 100.0
+# HELP vllm:time_to_first_token_seconds Histogram of time to first token in seconds.
+# TYPE vllm:time_to_first_token_seconds histogram
+vllm:time_to_first_token_seconds_bucket{engine="0",le="0.04",model_name="stub-org/StubModel-7B-Instruct"} 102.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="+Inf",model_name="stub-org/StubModel-7B-Instruct"} 425.0
+vllm:time_to_first_token_seconds_count{engine="0",model_name="stub-org/StubModel-7B-Instruct"} 425.0
+vllm:time_to_first_token_seconds_sum{engine="0",model_name="stub-org/StubModel-7B-Instruct"} 42.0
+vllm:time_to_first_token_seconds_bucket{engine="1",le="+Inf",model_name="stub-org/StubModel-7B-Instruct"} 100.0
+vllm:time_to_first_token_seconds_count{engine="1",model_name="stub-org/StubModel-7B-Instruct"} 100.0
+vllm:time_to_first_token_seconds_sum{engine="1",model_name="stub-org/StubModel-7B-Instruct"} 10.5
+# HELP vllm:inter_token_latency_seconds Histogram of inter-token latency in seconds.
+# TYPE vllm:inter_token_latency_seconds histogram
+vllm:inter_token_latency_seconds_bucket{engine="0",le="0.025",model_name="stub-org/StubModel-7B-Instruct"} 41000.0
+vllm:inter_token_latency_seconds_bucket{engine="0",le="+Inf",model_name="stub-org/StubModel-7B-Instruct"} 60600.0
+vllm:inter_token_latency_seconds_count{engine="0",model_name="stub-org/StubModel-7B-Instruct"} 60600.0
+vllm:inter_token_latency_seconds_sum{engine="0",model_name="stub-org/StubModel-7B-Instruct"} 1200.0
+vllm:inter_token_latency_seconds_bucket{engine="1",le="+Inf",model_name="stub-org/StubModel-7B-Instruct"} 19220.0
+vllm:inter_token_latency_seconds_count{engine="1",model_name="stub-org/StubModel-7B-Instruct"} 19220.0
+vllm:inter_token_latency_seconds_sum{engine="1",model_name="stub-org/StubModel-7B-Instruct"} 396.4
+# HELP vllm:e2e_request_latency_seconds Histogram of e2e request latency in seconds.
+# TYPE vllm:e2e_request_latency_seconds histogram
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="1.0",model_name="stub-org/StubModel-7B-Instruct"} 12.0
+vllm:e2e_request_latency_seconds_bucket{engine="0",le="+Inf",model_name="stub-org/StubModel-7B-Instruct"} 425.0
+vllm:e2e_request_latency_seconds_count{engine="0",model_name="stub-org/StubModel-7B-Instruct"} 425.0
+vllm:e2e_request_latency_seconds_sum{engine="0",model_name="stub-org/StubModel-7B-Instruct"} 3500.5
+vllm:e2e_request_latency_seconds_bucket{engine="1",le="+Inf",model_name="stub-org/StubModel-7B-Instruct"} 100.0
+vllm:e2e_request_latency_seconds_count{engine="1",model_name="stub-org/StubModel-7B-Instruct"} 100.0
+vllm:e2e_request_latency_seconds_sum{engine="1",model_name="stub-org/StubModel-7B-Instruct"} 1200.0
+# HELP vllm:request_queue_time_seconds Histogram of time spent in WAITING phase for request.
+# TYPE vllm:request_queue_time_seconds histogram
+vllm:request_queue_time_seconds_count{engine="0",model_name="stub-org/StubModel-7B-Instruct"} 425.0
+vllm:request_queue_time_seconds_sum{engine="0",model_name="stub-org/StubModel-7B-Instruct"} 500.25
+vllm:request_queue_time_seconds_count{engine="1",model_name="stub-org/StubModel-7B-Instruct"} 100.0
+vllm:request_queue_time_seconds_sum{engine="1",model_name="stub-org/StubModel-7B-Instruct"} 200.0
+# HELP vllm:request_inference_time_seconds Histogram of time spent in RUNNING phase for request.
+# TYPE vllm:request_inference_time_seconds histogram
+vllm:request_inference_time_seconds_count{engine="0",model_name="stub-org/StubModel-7B-Instruct"} 425.0
+vllm:request_inference_time_seconds_sum{engine="0",model_name="stub-org/StubModel-7B-Instruct"} 3000.25
+vllm:request_inference_time_seconds_count{engine="1",model_name="stub-org/StubModel-7B-Instruct"} 100.0
+vllm:request_inference_time_seconds_sum{engine="1",model_name="stub-org/StubModel-7B-Instruct"} 1000.0

@@ -1,0 +1,36 @@
+# HELP vllm:num_requests_running Number of requests currently running on GPU.
+# TYPE vllm:num_requests_running gauge
+vllm:num_requests_running{model_name="stub-v0-model"} 1.0
+# HELP vllm:num_requests_waiting Number of requests waiting to be processed.
+# TYPE vllm:num_requests_waiting gauge
+vllm:num_requests_waiting{model_name="stub-v0-model"} 0.0
+# HELP vllm:gpu_cache_usage_perc GPU KV-cache usage. 1 means 100 percent usage.
+# TYPE vllm:gpu_cache_usage_perc gauge
+vllm:gpu_cache_usage_perc{model_name="stub-v0-model"} 0.15
+# HELP vllm:prompt_tokens_total Number of prefill tokens processed.
+# TYPE vllm:prompt_tokens_total counter
+vllm:prompt_tokens_total{model_name="stub-v0-model"} 1234.0
+# HELP vllm:generation_tokens_total Number of generation tokens processed.
+# TYPE vllm:generation_tokens_total counter
+vllm:generation_tokens_total{model_name="stub-v0-model"} 567.0
+# HELP vllm:request_success_total Count of successfully processed requests.
+# TYPE vllm:request_success_total counter
+vllm:request_success_total{finished_reason="stop",model_name="stub-v0-model"} 10.0
+# HELP vllm:avg_generation_throughput_toks_per_s Average generation throughput in tokens/s.
+# TYPE vllm:avg_generation_throughput_toks_per_s gauge
+vllm:avg_generation_throughput_toks_per_s{model_name="stub-v0-model"} 42.0
+# HELP vllm:time_to_first_token_seconds Histogram of time to first token in seconds.
+# TYPE vllm:time_to_first_token_seconds histogram
+vllm:time_to_first_token_seconds_bucket{le="+Inf",model_name="stub-v0-model"} 10.0
+vllm:time_to_first_token_seconds_count{model_name="stub-v0-model"} 10.0
+vllm:time_to_first_token_seconds_sum{model_name="stub-v0-model"} 2.0
+# HELP vllm:time_per_output_token_seconds Histogram of time per output token in seconds.
+# TYPE vllm:time_per_output_token_seconds histogram
+vllm:time_per_output_token_seconds_bucket{le="+Inf",model_name="stub-v0-model"} 567.0
+vllm:time_per_output_token_seconds_count{model_name="stub-v0-model"} 567.0
+vllm:time_per_output_token_seconds_sum{model_name="stub-v0-model"} 11.34
+# HELP vllm:e2e_request_latency_seconds Histogram of end to end request latency in seconds.
+# TYPE vllm:e2e_request_latency_seconds histogram
+vllm:e2e_request_latency_seconds_bucket{le="+Inf",model_name="stub-v0-model"} 10.0
+vllm:e2e_request_latency_seconds_count{model_name="stub-v0-model"} 10.0
+vllm:e2e_request_latency_seconds_sum{model_name="stub-v0-model"} 88.8

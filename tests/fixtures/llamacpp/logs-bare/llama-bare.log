@@ -1,0 +1,10 @@
+build: 5192 (2f5a4b3) with GCC 13.2.0 for x86_64-linux-gnu
+srv    load_model: loading model '/opt/models/stubchat-7b-q4_k_m.gguf'
+llama_context: n_ctx         = 2048
+main: server is listening on http://127.0.0.1:8080 - starting the main loop
+srv  log_server_r: request: POST /completion 100.115.92.7 200
+slot print_timing: id  0 | task 3 |
+prompt eval time =      80.00 ms /    10 tokens (    8.00 ms per token,   125.00 tokens per second)
+       eval time =    1000.00 ms /    60 tokens (   16.67 ms per token,    60.00 tokens per second)
+      total time =    1080.00 ms /    70 tokens
+srv  log_server_r: request: POST /v1/completions 127.0.0.1 200

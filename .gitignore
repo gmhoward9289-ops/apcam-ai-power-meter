@@ -1,7 +1,11 @@
 # Captured telemetry never belongs in the repo. These files describe a specific
 # machine and its network: client identifiers, prompt sizes, model inventory.
+# The dataset.*/history.* patterns cover the per-source defaults the -Source
+# adapters write (dataset.llamacpp.json, history.vllm.json, ...).
 dataset.json
+dataset.*.json
 history.json
+history.*.json
 history.json.old
 machine.json
 dashboard.html

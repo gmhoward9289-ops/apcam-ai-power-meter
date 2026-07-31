@@ -1,0 +1,11 @@
+2026-04-02T09:10:00-0400 cihost llama-server[4242]: srv    load_model: loading model 'stubcoder-1b'
+2026-04-02T09:10:02-0400 cihost llama-server[4242]: llama_context: n_ctx         = 8192
+2026-04-02T09:10:02-0400 cihost llama-server[4242]: llama_context: n_batch       = 2048
+2026-04-02T09:10:03-0400 cihost llama-server[4242]: srv         init: initializing, n_slots = 2, n_ctx_slot = 4096, kv_unified = 'false'
+2026-04-02T09:11:00-0400 cihost llama-server[4242]: slot launch_slot: id  0 | task 12 | processing task, is_child = 0
+2026-04-02T09:11:09-0400 cihost llama-server[4242]: slot print_timing: id  0 | task 12 | n_decoded =    100, tg =  52.10 t/s, tg_3s =  51.80 t/s
+2026-04-02T09:11:12-0400 cihost llama-server[4242]: slot print_timing: id  0 | task 12 | n_decoded =    250, tg =  51.90 t/s, tg_3s =  51.60 t/s
+2026-04-02T09:11:14-0400 cihost llama-server[4242]: slot print_timing: id  0 | task 12 | prompt eval time =     120.00 ms /    64 tokens (    1.88 ms per token,   533.33 tokens per second)
+2026-04-02T09:11:14-0400 cihost llama-server[4242]: slot print_timing: id  0 | task 12 |        eval time =    5250.00 ms /   272 tokens (   19.30 ms per token,    51.81 tokens per second)
+2026-04-02T09:11:14-0400 cihost llama-server[4242]: slot print_timing: id  0 | task 12 |       total time =    5370.00 ms /   336 tokens
+2026-04-02T09:11:14-0400 cihost llama-server[4242]: slot print_timing: id  0 | task 12 |    graphs reused =         41
