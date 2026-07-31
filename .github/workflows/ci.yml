@@ -1,0 +1,58 @@
+# CI for the APCAM pipeline.
+#
+# parser-tests: the README's standing caveat is that collect.ps1 parses
+# llama-server internals (load_model:, n_decoded, task N) that are not a
+# stable interface. tests/run-parser-tests.ps1 pins the current format with
+# synthetic fixtures, so an Ollama format change fails here instead of going
+# quietly dark on a user's machine. Ubuntu runners ship pwsh, and collect.ps1
+# is parameterizable enough to run hermetically on Linux (fixture logs +
+# manifests, stub machine file, endpoint on a refusing port).
+#
+# secret-scan: two layers over FULL history - gitleaks (credentials) and
+# .github/scripts/pii_scan.py (public IPs, emails, connection strings,
+# credential-shaped filenames). The repo's whole privacy stance is that
+# captured telemetry never lands in git; this gate keeps the tracked
+# fixtures/sample data honest about it.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  parser-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: parser regression tests (collect.ps1 vs fixtures)
+        run: pwsh -NoProfile -File tests/run-parser-tests.ps1
+
+      # Build the demo page from the tracked synthetic dataset, then run the
+      # same DOM-stub check a publisher runs before sharing a page.
+      # -Template is passed explicitly: build.ps1's $PSScriptRoot-relative
+      # defaults join with '\', which is not a path separator on Linux.
+      - name: build demo page from the sample dataset
+        working-directory: apcam
+        run: pwsh -NoProfile -File ./build.ps1 -Template ./dashboard.template.html -Dataset ../sample/dataset.sample.json -OutFile ./demo.html
+
+      - name: verify demo page (DOM stub)
+        run: node apcam/verify.js apcam/demo.html
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history is required - a tip-only scan lets history leaks pass silently.
+          fetch-depth: 0
+
+      - name: gitleaks (full history)
+        env:
+          GITLEAKS_VERSION: 8.21.2
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz gitleaks
+          ./gitleaks detect --source . --redact --no-banner
+
+      - name: pii scan (full history)
+        run: python3 .github/scripts/pii_scan.py .
