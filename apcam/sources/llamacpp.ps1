@@ -264,12 +264,15 @@ $beforeE = $hist.events.Count; $beforeR = $hist.rates.Count
 foreach ($e in ($events | Where-Object { $_.start })) { $hist.events["$($e.start)|$($e.path)|$($e.client)|$($e.status)"] = $e }
 foreach ($r in ($rates  | Where-Object { $_.ts }))    { $hist.rates["$($r.ts)|$($r.tps)|$($r.gen)"] = $r }
 
-$allEvents = @($hist.events.Values | Sort-Object start) + @($events | Where-Object { -not $_.start })
-$allRates  = @($hist.rates.Values  | Sort-Object ts)    + @($rates  | Where-Object { -not $_.ts })
+# Same tie-break as collect.ps1's ollama path: Hashtable.Values enumeration
+# order is randomized per process, so a sort key that isn't total leaves same-
+# start ties in that random order. Mirror the rest of the dedupe key here too.
+$allEvents = @($hist.events.Values | Sort-Object start, path, client, status) + @($events | Where-Object { -not $_.start })
+$allRates  = @($hist.rates.Values  | Sort-Object ts, tps, gen)              + @($rates  | Where-Object { -not $_.ts })
 if ($sawTs -or (Test-Path $HistoryFile)) {
     Write-ApcamJson $HistoryFile ([pscustomobject]@{
-        events = @($hist.events.Values | Sort-Object start)
-        rates  = @($hist.rates.Values  | Sort-Object ts) }) 6
+        events = @($hist.events.Values | Sort-Object start, path, client, status)
+        rates  = @($hist.rates.Values  | Sort-Object ts, tps, gen) }) 6
 }
 
 # ---------------- inventory (no manifests, no registry - names only) ----------------
