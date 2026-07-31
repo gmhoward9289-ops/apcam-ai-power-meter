@@ -244,24 +244,16 @@ if ($r) {
 }
 
 # ---------------- run 2: re-scan against the existing history ----------------
-# NOTE deliberately asserted as DISTINCT tuples, not raw array length. The
-# history dedupe key stringifies $e.start / $r.ts; under pwsh 7,
-# ConvertFrom-Json revives those ISO strings as [datetime], which stringify
-# differently from the fresh-scan strings, so every re-run appends a second
-# copy of each event/rate (raw counts double). Windows PowerShell 5.1 keeps
-# them as strings and dedupes as designed. The invariant that holds on BOTH
-# runtimes - and the one that matters for the parser - is that a re-run of
-# the same logs adds no NEW distinct events or rate samples.
+# Asserted as RAW counts on purpose. collect.ps1's history merge pins
+# pwsh-7-revived [datetime] start/ts values back to ISO strings
+# (Format-HistTs) before building dedupe keys, so a re-run of the same logs
+# must add nothing on either runtime. If that fix regresses, every
+# event/rate duplicates and these counts double - this is the assertion
+# that catches it.
 $data2 = Invoke-Collect $dataset2 'run 2 (existing history, re-scan check)'
 Write-Host ""
-$uniqEv = @($data2.events | ForEach-Object {
-    '{0}|{1}|{2}|{3}' -f (ConvertTo-IsoSecond $_.start), $_.path, $_.client, $_.dur
-} | Sort-Object -Unique)
-$uniqRt = @($data2.rates | ForEach-Object {
-    '{0}|{1}|{2}' -f (ConvertTo-IsoSecond $_.ts), $_.tps, $_.gen
-} | Sort-Object -Unique)
-Assert-Eq 'run 2 distinct events unchanged (re-scan adds nothing new)' 6 $uniqEv.Count
-Assert-Eq 'run 2 distinct rates unchanged (re-scan adds nothing new)'  4 $uniqRt.Count
+Assert-Eq 'run 2 raw event count (re-scan adds nothing)' 6 @($data2.events).Count
+Assert-Eq 'run 2 raw rate count (re-scan adds nothing)'  4 @($data2.rates).Count
 Assert-Eq 'run 2 prompt token total' 707 $data2.promptTokens
 
 # ---------------- summary ----------------
