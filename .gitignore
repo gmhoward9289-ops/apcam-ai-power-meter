@@ -17,3 +17,6 @@ refresh.log.old
 Thumbs.db
 desktop.ini
 *.swp
+
+# generated demo page (build.ps1 -Dataset ..\sample\... -OutFile demo.html)
+demo.html

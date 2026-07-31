@@ -35,7 +35,8 @@ of measuring rather than assuming.
 
 It also surfaces things that are easy to miss: which model ate your GPU-hours, how much
 cost-per-token varies between models, and how much disk your model tags *appear* to use
-versus what they really occupy.
+versus what they really occupy. A CO2 slider (g/kWh) turns the energy figures into
+emissions, and the request/rate tables export as CSV straight from the page.
 
 ---
 
@@ -128,7 +129,7 @@ Nothing is transmitted anywhere. The page is a local file.
 
 | | |
 |---|---|
-| **Windows + NVIDIA** | Supported. This is what it was built and tested against (Ollama 0.32.5). |
+| **Windows + NVIDIA** | Supported. This is what it was built and tested against (Ollama 0.32.5). Multi-GPU boxes: calibrate one card with `.\calibrate.ps1 -GpuIndex N`; collect samples the same card. |
 | **Windows, non-NVIDIA** | Partial. `calibrate.ps1` writes a `machine.json` with null power fields and tells you so; fill in `gpuIdleW` / `gpuActiveW` by hand (a plug meter is the best source) and everything else works. |
 | **Linux / macOS** | Not yet. The log *parsing* is portable, but the entry point is not: the Linux service logs to journald and macOS to `~/.ollama/logs/`, and neither exposes power the way `nvidia-smi` does — Apple Silicon has no comparable per-GPU readout at all. PRs welcome. |
 

@@ -211,6 +211,11 @@ pre code { background: none; border: 0; padding: 0; }
           <input type="range" id="sysw" min="10" max="250" step="5" value="70" />
           <span class="ctl-hint">CPU, board, drives, fans. Estimated &mdash; only the GPU is metered.</span>
         </div>
+        <div class="ctl">
+          <label class="ctl-label" for="co2"><span>Carbon intensity</span><span class="ctl-val" id="co2-val"></span></label>
+          <input type="range" id="co2" min="0" max="900" step="10" value="370" />
+          <span class="ctl-hint">Grams CO&#8322; per kWh of your electricity. U.S. grid average is roughly 370; coal-heavy grids exceed 800, mostly-renewable ones sit under 100.</span>
+        </div>
       </div>
     </div>
     <div class="readouts" id="readouts"></div>
@@ -241,7 +246,10 @@ pre code { background: none; border: 0; padding: 0; }
               <h3 id="tps-title">Generation rate by model</h3>
               <p class="panel-note">Every rate sample the runner logged, grouped by the model loaded at the time. Samples are not tied to individual requests &mdash; see the method note.</p>
             </div>
-            <button class="tbtn" data-toggle="t-tps" aria-expanded="false" aria-controls="t-tps">Values</button>
+            <div style="display:flex; gap:6px">
+              <button class="tbtn" id="csv-rt" type="button">CSV</button>
+              <button class="tbtn" data-toggle="t-tps" aria-expanded="false" aria-controls="t-tps">Values</button>
+            </div>
           </div>
           <div class="chart" id="c-tps"><svg viewBox="0 0 460 250"></svg><div class="tip"></div></div>
           <div class="tw" id="t-tps" hidden></div>
@@ -253,7 +261,10 @@ pre code { background: none; border: 0; padding: 0; }
               <h3>Request duration over time</h3>
               <p class="panel-note">GPU-active seconds per request &mdash; the quantity every energy figure here is built from.</p>
             </div>
-            <button class="tbtn" data-toggle="t-dur" aria-expanded="false" aria-controls="t-dur">Values</button>
+            <div style="display:flex; gap:6px">
+              <button class="tbtn" id="csv-ev" type="button">CSV</button>
+              <button class="tbtn" data-toggle="t-dur" aria-expanded="false" aria-controls="t-dur">Values</button>
+            </div>
           </div>
           <div class="chart" id="c-dur"><svg viewBox="0 0 460 250"></svg><div class="tip"></div></div>
           <div class="legend" id="l-dur"></div>
@@ -320,7 +331,7 @@ pre code { background: none; border: 0; padding: 0; }
     <p id="method-lead"></p>
     <ul>
       <li><strong>Measured:</strong> GPU watts, VRAM and temperature; request start, duration, status, endpoint and client class; generation rates; model inventory and on-disk size.</li>
-      <li><strong>Estimated:</strong> non-GPU system draw (the slider), and the assumption that the GPU holds its sustained wattage for a whole request. Short requests spend part of their time loading weights at lower draw, so their energy is mildly over-stated.</li>
+      <li><strong>Estimated:</strong> non-GPU system draw (the slider), the CO&#8322; factor (grid carbon intensity varies by region and hour; the slider is a flat average), and the assumption that the GPU holds its sustained wattage for a whole request. Short requests spend part of their time loading weights at lower draw, so their energy is mildly over-stated.</li>
       <li><strong>Rates are per model, not per request.</strong> The runner's internal task ids are non-contiguous and do not map one-to-one onto HTTP requests, so pairing a rate to a request would be guesswork. Rates are attributed only to the model loaded at the time, which the load timeline does establish.</li>
       <li><strong>Some tags cannot be told apart.</strong> Tags sharing a weights blob differ only in a parameters layer and are indistinguishable in the logs, so they appear as one entity.</li>
       <li><strong>Not measured:</strong> wall power. A plug meter is the only way to close the gap between the GPU figure and what the outlet actually delivers.</li>
@@ -427,6 +438,8 @@ const GPU_ACTIVE = MACH.gpuActiveW ?? 0;
 const GPU_IDLE   = MACH.gpuIdleW ?? 0;
 let RATE = 0.17;
 let SYSW = MACH.systemWatts ?? 70;
+let CO2 = 370;
+const fmtCo2 = g => g < 1000 ? Math.round(g) + " g" : (g / 1000).toFixed(2) + " kg";
 
 const activeW = () => GPU_ACTIVE + SYSW;
 const idleW   = () => GPU_IDLE + SYSW;
@@ -466,7 +479,8 @@ function paintHero() {
     ["Active time", dur(activeSec), ""],
     ["Idle, same window", fmtMoney(idleW() * idleSec / 3600 / 1000 * RATE), ""],
     ["Always-on / month", "$" + (idleW() * 24 * 30 / 1000 * RATE).toFixed(2), ""],
-    ["Per hour running", fmtMoney(activeW() / 1000 * RATE), ""]
+    ["Per hour running", fmtMoney(activeW() / 1000 * RATE), ""],
+    ["CO&#8322;, inference", fmtCo2(kwh(activeSec) * CO2), ""]
   ];
   document.getElementById("readouts").innerHTML = R.map(([k, v, u]) =>
     `<div class="readout"><span class="k">${k}</span>` +
@@ -1019,8 +1033,10 @@ document.querySelectorAll("[data-toggle]").forEach(b => {
 function readControls() {
   RATE = parseFloat(document.getElementById("rate").value) / 100;
   SYSW = parseFloat(document.getElementById("sysw").value);
+  CO2 = parseFloat(document.getElementById("co2").value);
   document.getElementById("rate-val").textContent = (RATE * 100).toFixed(1) + "¢/kWh";
   document.getElementById("sysw-val").textContent = SYSW.toFixed(0) + " W";
+  document.getElementById("co2-val").textContent = CO2.toFixed(0) + " g/kWh";
 }
 function repaint() {
   readControls(); paintHero();
@@ -1028,7 +1044,26 @@ function repaint() {
   chartModel(); chartPerMillion(); chartClients();
 }
 document.getElementById("sysw").value = String(SYSW);
-["rate", "sysw"].forEach(id => document.getElementById(id).addEventListener("input", repaint));
+["rate", "sysw", "co2"].forEach(id => document.getElementById(id).addEventListener("input", repaint));
+
+/* =================== csv export =================== */
+function csvDownload(name, header, rows) {
+  const q = v => '"' + String(v ?? "").replace(/"/g, '""') + '"';
+  const text = [header, ...rows].map(r => r.map(q).join(",")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+document.getElementById("csv-ev").addEventListener("click", () =>
+  csvDownload("apcam-events.csv",
+    ["start", "dur_s", "status", "client", "path", "model", "ctx"],
+    EV.map(e => [e.start, e.dur, e.status, e.client, e.path, e.model, e.ctx])));
+document.getElementById("csv-rt").addEventListener("click", () =>
+  csvDownload("apcam-rates.csv",
+    ["ts", "tok_per_s", "gen_tokens_min", "model", "ctx"],
+    RATES.map(r => [r.ts, r.tps, r.gen, r.model, r.ctx])));
 
 paintStatic(); paintTiles(); paintInventory(); repaint();
 window.addEventListener("resize", () => { chartModel(); chartClients(); });

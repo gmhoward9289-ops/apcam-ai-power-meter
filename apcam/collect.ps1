@@ -103,6 +103,7 @@ function Get-ClientLabel([string]$addr) {
         $a -match '^192\.168\.' -or
         $a -match '^172\.(1[6-9]|2\d|3[01])\.' -or
         $a -match '^169\.254\.' -or
+        $a -match '^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.' -or
         $a.StartsWith('fe80:') -or $a.StartsWith('fc') -or $a.StartsWith('fd')
     $h = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($a))).Replace('-','').ToLower()
     return ($(if ($isPrivate) { 'lan-' } else { 'external-' }) + $h.Substring(0,4))
@@ -297,10 +298,15 @@ if (Test-Path $blobDir) {
 }
 
 $gpuNow = $null
+$gpuIdx = 0
+if ($machine.PSObject.Properties.Name -contains 'gpuIndex' -and $null -ne $machine.gpuIndex) {
+    $gpuIdx = [int]$machine.gpuIndex
+}
 try {
-    $raw = & nvidia-smi --query-gpu=power.draw,utilization.gpu,memory.used,memory.total,temperature.gpu `
+    $raw = & nvidia-smi -i $gpuIdx --query-gpu=power.draw,utilization.gpu,memory.used,memory.total,temperature.gpu `
                         --format=csv,noheader,nounits 2>$null
     if ($raw) {
+        if ($raw -is [array]) { $raw = $raw[0] }
         $p = ($raw -split ',').Trim()
         $gpuNow = [pscustomobject]@{ w=[double]$p[0]; util=[double]$p[1]
                                      vramUsed=[double]$p[2]; vramTotal=[double]$p[3]; temp=[double]$p[4] }

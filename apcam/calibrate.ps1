@@ -13,6 +13,7 @@ param(
     [string]$Endpoint = 'http://localhost:11434',
     [string]$Model    = '',          # default: smallest installed model
     [int]   $Predict  = 400,         # tokens to generate
+    [int]   $GpuIndex = 0,           # which GPU to calibrate on a multi-GPU box
     [int]   $IdleSamples = 8,
     [int]   $SampleMs = 700,
     [double]$SustainedFrac = 0.80    # "sustained" = samples >= this * peak
@@ -20,16 +21,18 @@ param(
 $ErrorActionPreference = 'Continue'
 
 function Get-GpuSample {
-    $raw = & nvidia-smi --query-gpu=power.draw,utilization.gpu,memory.used,temperature.gpu `
+    $raw = & nvidia-smi -i $GpuIndex --query-gpu=power.draw,utilization.gpu,memory.used,temperature.gpu `
                         --format=csv,noheader,nounits 2>$null
     if (-not $raw) { return $null }
+    if ($raw -is [array]) { $raw = $raw[0] }
     $p = ($raw -split ',').Trim()
     [pscustomobject]@{ w=[double]$p[0]; util=[double]$p[1]; vram=[double]$p[2]; temp=[double]$p[3] }
 }
 
 function Get-GpuStatic {
-    $raw = & nvidia-smi --query-gpu=name,power.limit,memory.total --format=csv,noheader,nounits 2>$null
+    $raw = & nvidia-smi -i $GpuIndex --query-gpu=name,power.limit,memory.total --format=csv,noheader,nounits 2>$null
     if (-not $raw) { return $null }
+    if ($raw -is [array]) { $raw = $raw[0] }
     $p = ($raw -split ',').Trim()
     [pscustomobject]@{ name=$p[0]; limitW=[double]$p[1]; vramMiB=[double]$p[2] }
 }
@@ -47,6 +50,7 @@ $machine = [ordered]@{
     schema        = 1
     calibratedAt  = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss')
     gpuVendor     = if ($hasNvidia) { 'nvidia' } else { 'unknown' }
+    gpuIndex      = $GpuIndex
     gpuName       = if ($hasNvidia) { $gpuStatic.name } else { $null }
     gpuVramMiB    = if ($hasNvidia) { $gpuStatic.vramMiB } else { $null }
     gpuLimitW     = if ($hasNvidia) { $gpuStatic.limitW } else { $null }
@@ -80,7 +84,13 @@ if (-not $hasNvidia) {
     return
 }
 
-Write-Output ("GPU: {0}  limit {1} W  VRAM {2} MiB" -f $gpuStatic.name, $gpuStatic.limitW, $gpuStatic.vramMiB)
+$gpuCount = @(& nvidia-smi --list-gpus 2>$null).Count
+if ($gpuCount -gt 1) {
+    Write-Warning ("{0} GPUs present - calibrating GPU {1} only (pick another with -GpuIndex). " -f $gpuCount, $GpuIndex)
+    Write-Warning "If Ollama spreads a model across GPUs, per-GPU watts under-count that inference."
+}
+
+Write-Output ("GPU {0}: {1}  limit {2} W  VRAM {3} MiB" -f $GpuIndex, $gpuStatic.name, $gpuStatic.limitW, $gpuStatic.vramMiB)
 
 # ---------------- pick a model ----------------
 if (-not $Model) {

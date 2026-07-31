@@ -18,6 +18,7 @@ function makeEl(tag = "div", id = null) {
     getAttribute(k) { return this._attrs[k] ?? null; },
     appendChild(c) { this._children.push(c); return c; },
     addEventListener(ev, fn) { listeners.push([this, ev, fn]); },
+    click() {},
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 760, height: 230 }),
     querySelector: sel => makeEl(sel === "svg" ? "svg" : "div"),
     querySelectorAll: () => [],
@@ -73,11 +74,12 @@ const fire = (pred, label) => {
   else console.log(`${label} OK (${n} handler${n === 1 ? "" : "s"})`);
 };
 
-// sliders: re-run the whole render at a different rate/wattage
-const rate = els.get("rate"), sysw = els.get("sysw");
+// sliders: re-run the whole render at a different rate/wattage/carbon factor
+const rate = els.get("rate"), sysw = els.get("sysw"), co2 = els.get("co2");
 if (rate) rate.value = "42.5";
 if (sysw) sysw.value = "125";
-fire((t, ev) => (t === rate || t === sysw) && ev === "input", "sliders ....... ");
+if (co2) co2.value = "500";
+fire((t, ev) => (t === rate || t === sysw || t === co2) && ev === "input", "sliders ....... ");
 fire((t, ev) => ["mouseenter", "mousemove", "mouseleave"].includes(ev), "hover ......... ");
 fire((t, ev) => ev === "click", "toggles ....... ");
 
@@ -89,7 +91,7 @@ if (missing.length) {
 const findings = (els.get("findings")?._html.match(/class="finding[ "]/g) || []).length;
 console.log(`findings ...... ${findings} rendered`);
 const hero = (els.get("hero-cost")?._text || "") + (els.get("hero-unit")?._text || "");
-console.log(`hero .......... ${hero} (at 42.5c/kWh + 125W)`);
+console.log(`hero .......... ${hero} (at 42.5c/kWh + 125W + 500g/kWh)`);
 
 console.log(fail ? "\nRESULT: FAILED - do not publish" : "\nRESULT: PASS - safe to publish");
 process.exit(fail ? 1 : 0);
