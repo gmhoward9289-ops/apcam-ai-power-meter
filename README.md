@@ -195,6 +195,53 @@ offline, and renders in light or dark to match your system.
 
 ---
 
+## Multiple machines on one page
+
+Every dataset already carries its own machine envelope, so merging is a build-time
+concern — copy each box's `dataset.json` somewhere and hand `build.ps1` all of them:
+
+```powershell
+.\build.ps1 -Dataset C:\fleet\office.json,C:\fleet\garage.json -OutFile fleet.html
+```
+
+Comma-separated or an array; one path behaves exactly as it always has. With several,
+the page gains a machine picker in the masthead — each machine renders its full
+dashboard from its own dataset, with its own sliders — plus a combined strip of the
+additive totals: requests, active time, energy, electricity cost and CO2, each machine
+at its own measured wattages and its own slider settings. Per-request economics
+(tok/s, $/Mtok) are deliberately never averaged across machines, because the wattages
+behind them are per-machine measurements and a blended figure would describe no
+machine. Tabs are named from a hand-added `label` on the dataset root, falling back
+to the machine's GPU name. Try it on the two synthetic samples:
+
+```powershell
+.\build.ps1 -Dataset ..\sample\dataset.sample.json,..\sample\dataset.sample2.json -OutFile fleet-demo.html -Open
+```
+
+## Prometheus metrics export
+
+For the Grafana / Home Assistant crowd: `export-metrics.ps1` turns a dataset into a
+Prometheus textfile-collector `.prom` file. Nothing is served — point node_exporter's
+(or windows_exporter's) textfile collector at the folder and schedule the script
+after `collect.ps1`:
+
+```powershell
+.\export-metrics.ps1 -OutFile C:\textfile_collector\apcam.prom
+.\export-metrics.ps1 -Dataset .\dataset.json -History .\history.json -OutFile .\apcam.prom -Validate
+```
+
+Emitted: `apcam_requests_total{model,status_class,client}`,
+`apcam_active_seconds_total{model}`, `apcam_energy_wh_total{model}` (at the measured
+`gpuActiveW` plus `-SystemWatts`, defaulting to the dataset's `machine.systemWatts`),
+`apcam_prompt_tokens_total`, `apcam_disk_bytes{scope,...}`, `apcam_gpu_watts`, and an
+`apcam_info{gpu,source}` marker. Counters are cumulative because the dataset already
+carries the merged event history; `-History` unions `history.json` in as well. The
+write is atomic (temp file, then rename) so a collector never reads a half-written
+file, and `-Validate` re-reads the emitted file and checks exposition-format shape
+line by line — no promtool needed.
+
+---
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Use it, change it, ship it; just keep the notice.
