@@ -42,7 +42,7 @@ versus what they really occupy.
 ## Quickstart
 
 ```powershell
-git clone https://github.com/gmhoward9289-ops/apcam-ai-power-usage-statistics.git shunt
+git clone https://github.com/gmhoward9289-ops/shunt-ai-power.git shunt
 cd shunt\apcam
 
 .\calibrate.ps1        # once per machine: measures your GPU's power envelope
