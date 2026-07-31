@@ -1,5 +1,8 @@
 /* Pre-publish check: runs dashboard.html's script against a minimal DOM stub and
    reports runtime errors, so a broken page is caught before it is published.
+   Also re-derives the dataset-conditional features (idle-policy advisor, hosted
+   reference, hardware amortization) from the injected data and fails if the
+   page disagrees.
    Usage:  node verify.js [dashboard.html] */
 const fs = require("fs");
 const path = require("path");
@@ -92,6 +95,52 @@ const findings = (els.get("findings")?._html.match(/class="finding[ "]/g) || [])
 console.log(`findings ...... ${findings} rendered`);
 const hero = (els.get("hero-cost")?._text || "") + (els.get("hero-unit")?._text || "");
 console.log(`hero .......... ${hero} (at 42.5c/kWh + 125W + 500g/kWh)`);
+
+/* Dataset-conditional features: expectations are re-derived from the injected
+   JSON, so these checks adapt to whatever page was built. */
+let DS = {};
+try {
+  DS = JSON.parse(html.slice(html.indexOf("/*BEGIN_DATA*/") + "/*BEGIN_DATA*/".length,
+                             html.indexOf("/*END_DATA*/")));
+} catch { /* unparsable data would already have failed boot */ }
+const dsEv = (DS.events || []).slice().sort((a, b) => a.start.localeCompare(b.start));
+const perHtml = els.get("t-per")?._html || "";
+
+if ((DS.rates || []).length) {
+  if (/data-ref="hosted"/.test(perHtml)) console.log("hosted refs ... OK");
+  else { console.error("hosted refs ... FAILED: reference table missing from #t-per"); fail++; }
+
+  const wantHw = typeof (DS.machine || {}).gpuCostUSD === "number" && DS.machine.gpuCostUSD > 0;
+  const haveHw = /Incl\. hardware/.test(perHtml);
+  if (wantHw === haveHw)
+    console.log(`amortization .. OK (${wantHw ? "column shown" : "no gpuCostUSD, column absent"})`);
+  else {
+    console.error(`amortization .. FAILED: gpuCostUSD ${wantHw
+      ? "present but column missing" : "absent but column rendered"}`);
+    fail++;
+  }
+}
+
+// idle-policy advisor: recompute the qualifying gaps (15 min = 900 s, matching
+// SLEEP_AFTER_MIN in the page) and check the finding shows exactly when due
+let gapSec = 0, end = null;
+dsEv.forEach(e => {
+  const s = new Date(e.start).getTime() / 1000;
+  if (end != null && s - end > 900) gapSec += s - end - 900;
+  end = end == null ? s + e.dur : Math.max(end, s + e.dur);
+});
+const winSec = dsEv.length
+  ? (Math.max(...dsEv.map(e => new Date(e.start).getTime() + e.dur * 1000))
+     - new Date(dsEv[0].start).getTime()) / 1000
+  : 0;
+const wantAdv = winSec >= 2 * 3600 && gapSec > 0;
+const haveAdv = /data-finding="idle-policy"/.test(els.get("findings")?._html || "");
+if (wantAdv === haveAdv)
+  console.log(`advisor ....... OK (${haveAdv ? "shown" : "conditions unmet, hidden"})`);
+else {
+  console.error(`advisor ....... FAILED: expected ${wantAdv ? "shown" : "hidden"}, got the opposite`);
+  fail++;
+}
 
 console.log(fail ? "\nRESULT: FAILED - do not publish" : "\nRESULT: PASS - safe to publish");
 process.exit(fail ? 1 : 0);
