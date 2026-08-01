@@ -13,6 +13,15 @@
 # degrades to manual entry. none skips telemetry and leaves the power fields for
 # you to fill in. Default: apple on macOS, nvidia everywhere else.
 #
+# When no telemetry is available, this script tries one more thing before
+# giving up: detect the GPU model by name alone and, if it is in
+# data/gpu-tdp.ps1's curated table, derive a rough envelope from its rated
+# TDP. That is the worst rung of APCAM's accuracy ladder - a thermal ceiling
+# is not a measured draw - so it is written with powerSource = "spec-estimate"
+# and machine.measured stays false; collect.ps1 and the dashboard carry that
+# distinction through. Pass -NoSpecEstimate to skip this and keep the old
+# fill-in-by-hand behavior.
+#
 # KEEP THIS FILE PURE ASCII - PowerShell 5.1 reads .ps1 as ANSI without a BOM,
 # so any non-ASCII literal is silently corrupted at parse time.
 param(
@@ -28,9 +37,11 @@ param(
     [string]$PlugType = 'auto',      # auto probes tasmota, then shelly gen2, then gen1
     [int]   $IdleSamples = 8,
     [int]   $SampleMs = 700,
-    [double]$SustainedFrac = 0.80    # "sustained" = samples >= this * peak
+    [double]$SustainedFrac = 0.80,   # "sustained" = samples >= this * peak
+    [switch]$NoSpecEstimate          # skip the TDP-based fallback; leave power fields null
 )
 $ErrorActionPreference = 'Continue'
+. (Join-Path $PSScriptRoot 'data/gpu-tdp.ps1')
 
 # ---------------- platform ----------------
 # $IsWindows/$IsLinux/$IsMacOS do not exist in Windows PowerShell 5.1 (they read
@@ -216,6 +227,68 @@ function Get-PlugWatts {
     return $null
 }
 
+# ---------------- spec-based estimation fallback ----------------
+# Gets a GPU model name with no telemetry query at all - just an OS-level
+# device listing. This is deliberately separate from Get-GpuStatic: it exists
+# for the case where that returns $null (no nvidia-smi/amd-smi/rocm-smi, or a
+# vendor probe that failed), so calibrate.ps1 still knows what card this is.
+function Get-GenericGpuName {
+    if ($onWindows) {
+        try {
+            $names = Get-CimInstance Win32_VideoController -ErrorAction Stop |
+                Where-Object { $_.Name -and $_.Name -notmatch '(?i)Basic Display|Remote Display|Virtual' } |
+                Select-Object -ExpandProperty Name
+            if ($names) { return ($names | Select-Object -First 1) }
+        } catch { }
+    } elseif ($onLinux) {
+        if (Test-Command 'lspci') {
+            try {
+                $lines = & lspci -mm 2>$null | Where-Object { $_ -match '"(VGA compatible controller|3D controller)"' }
+                if ($lines) {
+                    # lspci -mm quotes each field; the device name is the 4th quoted field.
+                    $m = [regex]::Matches(($lines | Select-Object -First 1), '"([^"]*)"')
+                    if ($m.Count -ge 4) { return $m[3].Value.Trim('"') }
+                }
+            } catch { }
+        }
+    } elseif ($onMacOS) {
+        if (Test-Command 'system_profiler') {
+            try {
+                $out = & system_profiler SPDisplaysDataType 2>$null
+                $line = $out | Where-Object { $_ -match 'Chipset Model:\s*(.+)$' } | Select-Object -First 1
+                if ($line -match 'Chipset Model:\s*(.+)$') { return $Matches[1].Trim() }
+            } catch { }
+        }
+    }
+    return $null
+}
+
+# Looks up $gpuName in the curated TDP table and derives a rough idle/active
+# wattage envelope from the match. These fractions are this feature's own
+# uncalibrated constants (not from any vendor source) - GPU-bound LLM decode
+# tends to sit near a card's power limit, with some headroom for boost
+# clocks; idle is a small fraction of TDP, with wide slack either side
+# because idle behavior varies a lot by driver and board. Returns $null if
+# the name does not match any table entry.
+function Get-SpecEstimate([string]$gpuName) {
+    $row = Find-GpuTdp $gpuName
+    if (-not $row) { return $null }
+    $ACTIVE_FRAC_LO = 0.75; $ACTIVE_FRAC_MODE = 0.90; $ACTIVE_FRAC_HI = 1.05
+    $IDLE_FRAC_LO   = 0.02; $IDLE_FRAC_MODE   = 0.05; $IDLE_FRAC_HI   = 0.10
+    return [pscustomobject]@{
+        label       = $row.label
+        tdpW        = $row.tdpW
+        source      = $row.source
+        sourceDate  = $row.sourceDate
+        idleW       = [math]::Round($row.tdpW * $IDLE_FRAC_MODE, 1)
+        idleLoW     = [math]::Round($row.tdpW * $IDLE_FRAC_LO, 1)
+        idleHiW     = [math]::Round($row.tdpW * $IDLE_FRAC_HI, 1)
+        activeW     = [math]::Round($row.tdpW * $ACTIVE_FRAC_MODE, 1)
+        activeLoW   = [math]::Round($row.tdpW * $ACTIVE_FRAC_LO, 1)
+        activeHiW   = [math]::Round($row.tdpW * $ACTIVE_FRAC_HI, 1)
+    }
+}
+
 # ---------------- vendor dispatch ----------------
 function Get-GpuStatic {
     switch ($GpuVendor) {
@@ -333,6 +406,17 @@ $machine = [ordered]@{
     # user-supplied estimate; only the GPU can be metered from software
     systemWatts   = 70
     measured      = $false
+    # "measured" | "spec-estimate" | "none" - see data/gpu-tdp.ps1 and the
+    # dashboard's "Spec-estimated" footer bullet for what each means.
+    powerSource   = 'none'
+    # populated only when powerSource = "spec-estimate"
+    gpuTdpW         = $null
+    gpuTdpSource    = $null
+    gpuTdpSourceDate = $null
+    gpuActiveLoW  = $null
+    gpuActiveHiW  = $null
+    gpuIdleLoW    = $null
+    gpuIdleHiW    = $null
     note          = ''
 }
 
@@ -360,9 +444,48 @@ if (-not $ready) {
             $why = 'GPU telemetry skipped (-GpuVendor none)'
         }
     }
+
+    # No real telemetry - try the TDP-based fallback before giving up and
+    # asking for manual entry. This never claims to be a measurement: the
+    # dashboard reads powerSource, not gpuIdleW/gpuActiveW alone, to decide
+    # what to call these numbers.
+    $specEstimated = $false
+    if (-not $NoSpecEstimate) {
+        $genericName = if ($machine.gpuName) { $machine.gpuName } else { Get-GenericGpuName }
+        $spec = if ($genericName) { Get-SpecEstimate $genericName } else { $null }
+        if ($spec) {
+            if (-not $machine.gpuName) { $machine.gpuName = $genericName }
+            $machine.gpuIdleW        = $spec.idleW
+            $machine.gpuActiveW      = $spec.activeW
+            $machine.gpuIdleLoW      = $spec.idleLoW
+            $machine.gpuIdleHiW      = $spec.idleHiW
+            $machine.gpuActiveLoW    = $spec.activeLoW
+            $machine.gpuActiveHiW    = $spec.activeHiW
+            $machine.gpuTdpW         = $spec.tdpW
+            $machine.gpuTdpSource    = $spec.source
+            $machine.gpuTdpSourceDate = $spec.sourceDate
+            $machine.powerSource     = 'spec-estimate'
+            $machine.measured        = $false
+            $machine.note = "$why. Modeled from $($spec.label)'s rated TDP " +
+                "($($spec.tdpW) W, $($spec.source)): idle $($spec.idleLoW)-$($spec.idleHiW) W, " +
+                "active $($spec.activeLoW)-$($spec.activeHiW) W. This is not a measurement - it is the " +
+                "worst rung of APCAM's accuracy ladder. Run calibrate.ps1 with real GPU telemetry, or a " +
+                "plug meter, for a real number. Pass -NoSpecEstimate to skip this and fill in by hand instead."
+            $specEstimated = $true
+        }
+    }
+
+    if (-not $specEstimated) { $machine.powerSource = 'none' }
     $machine | ConvertTo-Json -Depth 4 | Set-Content -Path $OutFile -Encoding utf8
-    Write-Warning "$why - wrote $OutFile with power fields left null."
-    Write-Output "Fill in gpuIdleW and gpuActiveW manually, then run collect.ps1."
+    if ($specEstimated) {
+        Write-Warning "$why - modeled gpuIdleW/gpuActiveW from rated TDP instead (powerSource: spec-estimate)."
+        Write-Output ("envelope (spec-estimate): {0} W idle -> {1} W active, modeled from {2} ({3} W TDP)" -f `
+            $machine.gpuIdleW, $machine.gpuActiveW, $machine.gpuName, $machine.gpuTdpW)
+        if ($onWindows) { Write-Output "next: .\collect.ps1" } else { Write-Output "next: pwsh ./collect.ps1" }
+    } else {
+        Write-Warning "$why - wrote $OutFile with power fields left null."
+        Write-Output "Fill in gpuIdleW and gpuActiveW manually, then run collect.ps1."
+    }
     return
 }
 
@@ -512,10 +635,11 @@ if ($PlugUrl -and -not $plugOk) {
     Write-Warning "smart plug at $PlugUrl unreachable or reports no power - wall figures skipped."
 }
 $machine.measured        = $true
-$powerSource = 'nvidia-smi'
-if ($GpuVendor -eq 'amd')       { $powerSource = 'amd-smi/rocm-smi' }
-elseif ($GpuVendor -eq 'apple') { $powerSource = 'powermetrics (Apple GPU rail; CPU and ANE draw excluded)' }
-$machine.note            = "gpuIdleW/gpuActiveW measured with $powerSource. systemWatts is an " +
+$machine.powerSource     = 'measured'
+$telemetryMethod = 'nvidia-smi'
+if ($GpuVendor -eq 'amd')       { $telemetryMethod = 'amd-smi/rocm-smi' }
+elseif ($GpuVendor -eq 'apple') { $telemetryMethod = 'powermetrics (Apple GPU rail; CPU and ANE draw excluded)' }
+$machine.note            = "gpuIdleW/gpuActiveW measured with $telemetryMethod. systemWatts is an " +
                            'estimate for everything that is not the GPU - adjust it, or use a ' +
                            'plug meter to measure wall draw properly.'
 
