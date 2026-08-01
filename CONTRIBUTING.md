@@ -67,7 +67,9 @@ node verify.js demo.html
 without capturing anything real. `verify.js` runs the built page's JS against a DOM stub:
 it boots the script, fires the slider, hover and toggle handlers, and fails on a missing
 element id or a runtime error. It exits non-zero on failure, prints the rendered hero
-figure, and needs no browser.
+figure, and needs no browser. It also boots the page a second time against saved
+storage, so slider persistence and the location picker are covered — including that the
+page still boots where `localStorage` throws, which is the `file://` case.
 
 Two things to know: it checks the **built** page, not `dashboard.template.html`, so
 rebuild before verifying; and it proves the page does not crash, not that a number is

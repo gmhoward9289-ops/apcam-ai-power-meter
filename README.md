@@ -73,6 +73,14 @@ Before sharing a generated page, sanity-check it:
 node verify.js         # runs the page's JS against a DOM stub; catches a broken build
 ```
 
+The location averages behind the rate picker are embedded at build time, so the page
+never reaches the network. Refresh them when they drift:
+
+```powershell
+.\refresh-rates.ps1 -ApiKey $env:EIA_API_KEY -WhatIf   # show what would change
+.\refresh-rates.ps1 -ApiKey $env:EIA_API_KEY           # rewrite the table, then rebuild
+```
+
 The parser has regression tests of its own: synthetic `server*.log` fixtures under
 `tests/fixtures/` are run through `collect.ps1` and the emitted dataset is asserted
 field by field, so a llama-server format change fails in CI rather than going quietly
