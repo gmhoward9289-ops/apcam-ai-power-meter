@@ -24,7 +24,11 @@ Two independent sources, joined:
    runner's load-event timeline.
 
 Energy is then `duration x (measured GPU watts + your system-watts estimate)`, and cost
-is that against a rate you set with a slider.
+is that against a rate you set with a slider. Slider settings persist between reloads
+(per machine, via `localStorage`, degrading gracefully where `file://` storage is
+unavailable), and an optional location picker under the rate slider seeds it from the
+EIA average residential price for a U.S. state — labelled with its data vintage, and an
+average to start from, not a measurement of your bill.
 
 ### The finding that motivated this
 
