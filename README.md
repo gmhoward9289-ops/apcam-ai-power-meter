@@ -24,7 +24,11 @@ Two independent sources, joined:
    runner's load-event timeline.
 
 Energy is then `duration x (measured GPU watts + your system-watts estimate)`, and cost
-is that against a rate you set with a slider.
+is that against a rate you set with a slider. Slider settings persist between reloads
+(per machine, via `localStorage`, degrading gracefully where `file://` storage is
+unavailable), and an optional location picker under the rate slider seeds it from the
+EIA average residential price for a U.S. state — labelled with its data vintage, and an
+average to start from, not a measurement of your bill.
 
 ### The finding that motivated this
 
@@ -67,6 +71,14 @@ Before sharing a generated page, sanity-check it:
 
 ```powershell
 node verify.js         # runs the page's JS against a DOM stub; catches a broken build
+```
+
+The location averages behind the rate picker are embedded at build time, so the page
+never reaches the network. Refresh them when they drift:
+
+```powershell
+.\refresh-rates.ps1 -ApiKey $env:EIA_API_KEY -WhatIf   # show what would change
+.\refresh-rates.ps1 -ApiKey $env:EIA_API_KEY           # rewrite the table, then rebuild
 ```
 
 The parser has regression tests of its own: synthetic `server*.log` fixtures under

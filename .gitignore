@@ -22,5 +22,7 @@ Thumbs.db
 desktop.ini
 *.swp
 
-# generated demo page (build.ps1 -Dataset ..\sample\... -OutFile demo.html)
+# generated demo pages (build.ps1 -Dataset ..\sample\... -OutFile demo.html);
+# demo-multi.html is the same for a two-machine build
 demo.html
+demo-multi.html
