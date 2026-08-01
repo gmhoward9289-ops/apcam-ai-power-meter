@@ -27,6 +27,13 @@ In rough order of value:
    produces, breakage from an Ollama version bump. See the standing caveat in the README:
    `llama-server` internals are not a stable interface.
 
+**Idea, not yet scoped:** auto-fill the electricity-rate and carbon-intensity sliders from
+the viewer's rough location (geolocation or IP-based, client-side only) instead of leaving
+them at the U.S.-average defaults. Would need a defensible free/no-signup data source for
+per-region rate and grid-intensity figures, and a clear "this is an estimate for your area,
+not a measurement" label so it doesn't blur the measured/estimated line below. Falls under
+the same "discuss before sending a PR" rule as any other dashboard feature.
+
 **Not wanted without discussing it first:** new dashboard panels, metrics, or chart types.
 Open an issue. The page is deliberately one self-contained file with a fixed scope, and a
 feature that arrives as a finished PR is harder to say no to than it should be.
