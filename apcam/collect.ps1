@@ -354,8 +354,13 @@ $beforeE = $hist.events.Count; $beforeR = $hist.rates.Count
 foreach ($e in $events) { $hist.events["$($e.start)|$($e.path)|$($e.client)|$($e.dur)"] = $e }
 foreach ($r in $rates)  { $hist.rates["$($r.ts)|$($r.tps)|$($r.gen)"] = $r }
 
-$allEvents = @($hist.events.Values | Sort-Object { [datetime]$_.start })
-$allRates  = @($hist.rates.Values  | Sort-Object { [datetime]$_.ts })
+# Hashtable.Values enumeration order is randomized per process, and Sort-Object
+# is stable, so a sort key that isn't total leaves ties (two events with the
+# same start second) in that random order - a rerun of identical logs can
+# reorder them in dataset.json. Break ties with the rest of the dedupe key so
+# the sort key is total and the output order is reproducible.
+$allEvents = @($hist.events.Values | Sort-Object { [datetime]$_.start }, path, client, dur)
+$allRates  = @($hist.rates.Values  | Sort-Object { [datetime]$_.ts }, tps, gen)
 [System.IO.File]::WriteAllText($HistoryFile,
     ([pscustomobject]@{ events = $allEvents; rates = $allRates } | ConvertTo-Json -Depth 6 -Compress),
     [System.Text.UTF8Encoding]::new($false))
