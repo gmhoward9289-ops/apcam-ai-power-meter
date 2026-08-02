@@ -245,6 +245,48 @@ else {
   fail++;
 }
 
+/* Power-source honesty: whatever powerSource this build's machine.json
+   carries, the page must describe it correctly and must never let a
+   spec-estimate or absent reading read as "measured". This is the
+   CONTRIBUTING.md non-negotiable, checked against whatever dataset was
+   actually built rather than a fixed fixture. */
+{
+  const src = (DS.machine || {}).powerSource ||
+    ((DS.machine || {}).measured ? "measured" : "none");
+  const heroHtml = els.get("hero-cap")?._html || "";
+  const findHtml = els.get("findings")?._html || "";
+  const tilesHtml = els.get("tiles")?._html || "";
+  const methodHtml = els.get("method-lead")?._html || "";
+  // A positive "this reading is measured" claim, distinct from an honest
+  // "this was NOT measured" disclosure - both contain the word "measured",
+  // so only the affirmative phrasing counts as a false claim here.
+  const claimsMeasured = s => /\bW measured GPU\b/.test(s) || />Measured power envelope</.test(s) ||
+    /power was measured with/.test(s);
+  const noMeasuredClaim = !claimsMeasured(heroHtml) && !claimsMeasured(tilesHtml) &&
+    !claimsMeasured(methodHtml);
+  if (src === "measured") {
+    if (claimsMeasured(heroHtml) && claimsMeasured(tilesHtml))
+      console.log("power source .. OK (measured)");
+    else { console.error("power source .. FAILED: measured build does not say so"); fail++; }
+  } else if (src === "spec-estimate") {
+    const tdpSrc = (DS.machine || {}).gpuTdpSource || "";
+    const saysEstimated = /spec-estimated|estimated|modeled/i.test(heroHtml + tilesHtml + methodHtml);
+    const citesTdp = !tdpSrc || tilesHtml.includes(tdpSrc) || methodHtml.includes(tdpSrc) ||
+      findHtml.includes(tdpSrc);
+    if (noMeasuredClaim && saysEstimated && citesTdp)
+      console.log("power source .. OK (spec-estimate, never claims measured)");
+    else {
+      console.error(`power source .. FAILED: spec-estimate build ${noMeasuredClaim ? "" : "says 'measured'; "}` +
+        `${saysEstimated ? "" : "missing estimated/modeled wording; "}${citesTdp ? "" : "missing TDP source citation"}`);
+      fail++;
+    }
+  } else {
+    if (noMeasuredClaim)
+      console.log("power source .. OK (none, no measured claim)");
+    else { console.error("power source .. FAILED: unmeasured build claims 'measured'"); fail++; }
+  }
+}
+
 }
 
 /* =========== location lookup and slider persistence ===========
