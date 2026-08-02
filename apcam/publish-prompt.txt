@@ -1,0 +1,25 @@
+Republish an existing Claude artifact that has just been regenerated on disk.
+
+Call the Artifact tool exactly once, with exactly these values:
+
+- file_path: C:\Users\gmhow\apcam-ai-power-meter\apcam\dashboard.html
+- url: https://claude.ai/code/artifact/02e67fc4-4f7f-4a86-8375-ca0b7151ae40
+- favicon: ⚡
+- description: Measured power draw and cost of local AI inference on this workstation
+- force: true
+
+Notes so you do not have to deliberate about any of this:
+
+- The favicon must be the high-voltage emoji shown above and nothing else. Substituting a
+  different one makes it look like a different page in the user's browser tabs. If it did
+  not survive into your prompt as a single valid emoji, do NOT guess a replacement - abort
+  and say ENCODING_LOST instead of publishing.
+- force: true is deliberate. The page is regenerated in full by build.ps1 on every run, so
+  there is never a hand-edited version to merge, and a fresh session will always trip the
+  "hasn't viewed the latest version" guard.
+- Reading the file first is expected and fine.
+
+Do not edit anything, do not publish twice, do not WebFetch the URL.
+
+When the publish succeeds, your entire reply must be the single token PUBLISHED_OK.
+If it fails, reply with PUBLISH_FAILED followed by the verbatim error.

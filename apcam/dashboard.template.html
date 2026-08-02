@@ -1203,9 +1203,11 @@ function paintStatic() {
     `generation rates and model attribution were parsed from Ollama's own server logs. ` +
     `Everything else is derived from those two sources plus the two sliders above.`;
   document.getElementById("staleness").innerHTML =
-    `This page is a snapshot, not a live feed. Dataset captured ` +
-    `${(DATA.generatedAt || "").replace("T", " ")}; APCAM appends to its own history file, so each ` +
-    `rebuild covers a longer window than Ollama's own logs retain.`;
+    `This page is a snapshot, not a live feed. Models last used ` +
+    `<strong>${tEnd.toLocaleString("en-US", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</strong> ` +
+    `&mdash; probe last ran <strong>${(DATA.generatedAt || "").replace("T", " ")}</strong>. ` +
+    `A recent probe time with an old "last used" means the refresh pipeline is healthy and there's simply been no new local-model activity to collect. ` +
+    `APCAM appends to its own history file, so each rebuild covers a longer window than Ollama's own logs retain.`;
 }
 
 function readControls() {
