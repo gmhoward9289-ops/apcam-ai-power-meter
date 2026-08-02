@@ -101,6 +101,10 @@ p { margin: 0; }
 .ctl-val { font-family: var(--mono); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 input[type="range"] { width: 100%; accent-color: var(--s1); margin: 0; }
 .ctl-hint { font-size: 11.5px; color: var(--muted); }
+.ctl select { font-family: var(--mono); font-size: 11px; color: var(--ink-2);
+  background: var(--sunken); border: 1px solid var(--rule); border-radius: var(--r);
+  padding: 4px 6px; max-width: 100%; }
+.ctl select:focus { outline: 1px solid var(--s1); }
 
 .readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr));
   border-top: 1px solid var(--rule); }
@@ -222,6 +226,8 @@ pre code { background: none; border: 0; padding: 0; }
           <label class="ctl-label" for="rate"><span>Electricity rate</span><span class="ctl-val" id="rate-val"></span></label>
           <input type="range" id="rate" min="2" max="80" step="0.5" value="17" />
           <span class="ctl-hint">Set this to your own utility rate. The default is the U.S. residential average.</span>
+          <select id="loc" aria-label="Apply the average residential rate for a location"></select>
+          <span class="ctl-hint" id="loc-note" hidden></span>
         </div>
         <div class="ctl">
           <label class="ctl-label" for="sysw"><span>Non-GPU system draw</span><span class="ctl-val" id="sysw-val"></span></label>
@@ -393,9 +399,66 @@ const MULTI = DATA.multi === true && Array.isArray(DATA.machines) && DATA.machin
 const PAGES = MULTI ? DATA.machines : [DATA];
 const pageLabel = (ds, i) => ds.label || (ds.machine || {}).host ||
   (ds.machine || {}).gpuName || "Machine " + (i + 1);
+/* ---------- location rate lookup ----------
+   EIA average residential retail electricity price, cents/kWh. These are
+   published state-wide AVERAGES, refreshed by hand when this table is next
+   touched - they are an estimate to seed the slider with, never a measurement
+   of anyone's bill. Source: EIA Electric Power Monthly (retail price by
+   state, residential sector), April 2026 vintage; DC is March 2026. */
+const LOC_ASOF = "Apr 2026";
+const LOC_RATES = {
+  US: ["United States average", 18.8],
+  AL: ["Alabama", 17.4], AK: ["Alaska", 27.4], AZ: ["Arizona", 15.5],
+  AR: ["Arkansas", 14.2], CA: ["California", 35.3], CO: ["Colorado", 16.5],
+  CT: ["Connecticut", 32.2], DE: ["Delaware", 18.8], DC: ["District of Columbia", 25.0],
+  FL: ["Florida", 15.4], GA: ["Georgia", 15.4], HI: ["Hawaii", 46.6],
+  ID: ["Idaho", 12.7], IL: ["Illinois", 20.5], IN: ["Indiana", 17.9],
+  IA: ["Iowa", 13.9], KS: ["Kansas", 15.8], KY: ["Kentucky", 15.0],
+  LA: ["Louisiana", 14.4], ME: ["Maine", 28.4], MD: ["Maryland", 22.1],
+  MA: ["Massachusetts", 29.5], MI: ["Michigan", 21.4], MN: ["Minnesota", 16.4],
+  MS: ["Mississippi", 16.8], MO: ["Missouri", 14.0], MT: ["Montana", 13.9],
+  NE: ["Nebraska", 13.3], NV: ["Nevada", 14.3], NH: ["New Hampshire", 27.2],
+  NJ: ["New Jersey", 23.5], NM: ["New Mexico", 15.2], NY: ["New York", 29.5],
+  NC: ["North Carolina", 16.3], ND: ["North Dakota", 12.4], OH: ["Ohio", 19.5],
+  OK: ["Oklahoma", 13.3], OR: ["Oregon", 15.8], PA: ["Pennsylvania", 21.5],
+  RI: ["Rhode Island", 28.3], SC: ["South Carolina", 17.1], SD: ["South Dakota", 14.5],
+  TN: ["Tennessee", 14.9], TX: ["Texas", 17.0], UT: ["Utah", 13.3],
+  VT: ["Vermont", 24.6], VA: ["Virginia", 17.4], WA: ["Washington", 14.4],
+  WV: ["West Virginia", 16.1], WI: ["Wisconsin", 19.2], WY: ["Wyoming", 14.7]
+};
+
 /* Sliders are per-page: each machine keeps its own rate / system-draw / CO2
-   settings, seeded from its own dataset. Defaults match the markup. */
-const CTL = PAGES.map(ds => ({ rate: "17", sysw: String((ds.machine || {}).systemWatts ?? 70), co2: "370" }));
+   settings, seeded from its own dataset. Defaults match the markup.
+   Settings persist across reloads via localStorage, keyed per machine so a
+   multi-machine build restores each page independently. The page is usually
+   opened from file://, where some browsers give each file an opaque origin
+   or refuse storage outright - every access is fenced so the dashboard
+   degrades to the old reset-on-reload behavior rather than breaking. */
+const STORE_KEY = "apcam:ctl:v1";
+const ctlKey = (ds, i) => ((ds.machine || {}).host || pageLabel(ds, i) || String(i));
+const loadStored = () => {
+  try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; }
+  catch { return {}; }
+};
+const saveCtl = () => {
+  try {
+    const out = {};
+    PAGES.forEach((ds, i) => { out[ctlKey(ds, i)] = CTL[i]; });
+    localStorage.setItem(STORE_KEY, JSON.stringify(out));
+  } catch { /* storage unavailable: settings stay for this visit only */ }
+};
+const STORED = loadStored();
+const inRange = (v, lo, hi) => Number.isFinite(parseFloat(v)) &&
+  parseFloat(v) >= lo && parseFloat(v) <= hi;
+const CTL = PAGES.map((ds, i) => {
+  const c = { rate: "17", sysw: String((ds.machine || {}).systemWatts ?? 70), co2: "370", loc: "" };
+  const s = STORED[ctlKey(ds, i)] || {};
+  if (inRange(s.rate, 2, 80))   c.rate = String(parseFloat(s.rate));
+  if (inRange(s.sysw, 10, 250)) c.sysw = String(parseFloat(s.sysw));
+  if (inRange(s.co2, 0, 900))   c.co2  = String(parseFloat(s.co2));
+  if (typeof s.loc === "string" && (s.loc === "" || LOC_RATES[s.loc])) c.loc = s.loc;
+  return c;
+});
 let PAGE = 0;
 let repaintPage = () => {};
 let resizePage = () => {};
@@ -1140,9 +1203,11 @@ function paintStatic() {
     `generation rates and model attribution were parsed from Ollama's own server logs. ` +
     `Everything else is derived from those two sources plus the two sliders above.`;
   document.getElementById("staleness").innerHTML =
-    `This page is a snapshot, not a live feed. Dataset captured ` +
-    `${(DATA.generatedAt || "").replace("T", " ")}; APCAM appends to its own history file, so each ` +
-    `rebuild covers a longer window than Ollama's own logs retain.`;
+    `This page is a snapshot, not a live feed. Models last used ` +
+    `<strong>${tEnd.toLocaleString("en-US", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</strong> ` +
+    `&mdash; probe last ran <strong>${(DATA.generatedAt || "").replace("T", " ")}</strong>. ` +
+    `A recent probe time with an old "last used" means the refresh pipeline is healthy and there's simply been no new local-model activity to collect. ` +
+    `APCAM appends to its own history file, so each rebuild covers a longer window than Ollama's own logs retain.`;
 }
 
 function readControls() {
@@ -1161,6 +1226,7 @@ function repaint() {
 document.getElementById("rate").value = ctl.rate;
 document.getElementById("sysw").value = ctl.sysw;
 document.getElementById("co2").value = ctl.co2;
+syncLoc(ctl);
 repaintPage = repaint;
 
 /* =================== csv export =================== */
@@ -1205,9 +1271,42 @@ document.querySelectorAll("[data-toggle]").forEach(b => {
     c.rate = document.getElementById("rate").value;
     c.sysw = document.getElementById("sysw").value;
     c.co2 = document.getElementById("co2").value;
+    saveCtl();
     repaintPage();
     if (MULTI) paintCombined();
   }));
+
+/* Location lookup: the picker is populated from LOC_RATES so the data lives
+   in one place. Choosing a location applies its published average to the
+   rate slider, snapped to the slider's 0.5c step; the slider stays free to
+   override, and the note keeps the exact published figure visible. */
+const locSel = document.getElementById("loc");
+locSel.innerHTML = `<option value="">Look up an average rate by location&hellip;</option>` +
+  Object.keys(LOC_RATES).map(k =>
+    `<option value="${k}">${LOC_RATES[k][0]} &middot; ${LOC_RATES[k][1].toFixed(1)}&cent;/kWh</option>`).join("");
+function syncLoc(c) {
+  locSel.value = c.loc || "";
+  const note = document.getElementById("loc-note");
+  const e = LOC_RATES[c.loc];
+  note.hidden = !e;
+  note.innerHTML = e
+    ? `${e[0]}: ${e[1].toFixed(1)}&cent;/kWh (EIA residential average, ${LOC_ASOF}). ` +
+      `A location-wide average, not your bill &mdash; drag the slider to your real rate.`
+    : "";
+}
+locSel.addEventListener("change", () => {
+  const c = CTL[PAGE];
+  c.loc = LOC_RATES[locSel.value] ? locSel.value : "";
+  if (c.loc) {
+    const v = Math.min(80, Math.max(2, Math.round(LOC_RATES[c.loc][1] * 2) / 2));
+    c.rate = String(v);
+    document.getElementById("rate").value = c.rate;
+  }
+  syncLoc(c);
+  saveCtl();
+  repaintPage();
+  if (MULTI) paintCombined();
+});
 document.getElementById("csv-ev").addEventListener("click", () => { if (csvEv) csvEv(); });
 document.getElementById("csv-rt").addEventListener("click", () => { if (csvRt) csvRt(); });
 window.addEventListener("resize", () => resizePage());

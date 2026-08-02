@@ -14,7 +14,10 @@ const target = process.argv[2] || path.join(__dirname, "dashboard.html");
 const html = fs.readFileSync(target, "utf8");
 
 const realIds = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]));
-const listeners = [];
+/* Rebound, not reassigned casually: the reload check below boots the page a
+   second time against a fresh element map and listener list, which is what a
+   browser reload actually does. makeEl and document read these dynamically. */
+let listeners = [];
 
 function makeEl(tag = "div", id = null) {
   const e = {
@@ -37,7 +40,7 @@ function makeEl(tag = "div", id = null) {
   return e;
 }
 
-const els = new Map();
+let els = new Map();
 const missing = [];
 const document = {
   createElementNS: (ns, tag) => makeEl(tag),
@@ -58,11 +61,28 @@ const document = {
 };
 const window = { addEventListener: (ev, fn) => listeners.push([window, ev, fn]) };
 
+/* Slider settings persist through localStorage. The stub records writes so the
+   persistence check can inspect what the page saved, and `seed` lets a second
+   boot start from a previous run's storage - which is what a reload is. */
+function makeStorage(seed = null) {
+  let v = seed;
+  return {
+    getItem: () => v,
+    setItem: (k, val) => { v = String(val); },
+    removeItem: () => { v = null; },
+    dump: () => v,
+  };
+}
+let localStorage = makeStorage();
+
 const script = html.slice(html.indexOf("<script>") + 8, html.lastIndexOf("</scr" + "ipt>"));
 let fail = 0;
 
+const boot = (doc, win, store) =>
+  new Function("document", "window", "localStorage", script)(doc, win, store);
+
 try {
-  new Function("document", "window", script)(document, window);
+  boot(document, window, localStorage);
   console.log("boot .......... OK");
 } catch (e) {
   console.error("boot .......... FAILED:", e.message);
@@ -225,6 +245,137 @@ else {
   fail++;
 }
 
+}
+
+/* =========== location lookup and slider persistence ===========
+   Runs last on purpose: picking a location moves the rate slider, which would
+   invalidate the hero and per-machine expectations derived above. Everything
+   here is checked against the page's own embedded table and its own saved
+   state, so refreshing the published figures does not invalidate the test. */
+
+const locSel = els.get("loc");
+const locOpts = [...(locSel?._html || "").matchAll(/<option value="([A-Z]{2})">([^<]*)/g)];
+if (locOpts.length >= 51) console.log(`locations ..... OK (${locOpts.length} entries)`);
+else { console.error(`locations ..... FAILED: ${locOpts.length} option(s), expected 51+`); fail++; }
+
+/* Picking a location must move the rate slider onto that location's published
+   figure, snapped to the slider's 0.5c step, and reveal the caveat note. The
+   note matters as much as the number: an average presented without its
+   caveat is exactly the estimate-as-measurement the project forbids. */
+if (locOpts.length) {
+  const pick = locOpts.find(o => /Hawaii/.test(o[2])) || locOpts[1];
+  const published = parseFloat(/([0-9.]+)&cent;/.exec(pick[2])?.[1] ?? "NaN");
+  const snapped = Number.isFinite(published)
+    ? Math.min(80, Math.max(2, Math.round(published * 2) / 2)) : null;
+  locSel.value = pick[1];
+  const before = parseFloat(els.get("rate").value);
+  fire((t, ev) => t === locSel && ev === "change", "location pick . ");
+  const after = parseFloat(els.get("rate").value);
+  const note = els.get("loc-note");
+  const rateOk = snapped == null ? after !== before : after === snapped;
+  const noteOk = note._hidden === false && /average/i.test(note._html || "");
+  if (rateOk && noteOk)
+    console.log(`location rate . OK (${pick[1]} -> ${after}c/kWh, caveat shown)`);
+  else {
+    console.error(`location rate . FAILED: rate ${after}` +
+      (snapped == null ? "" : ` want ${snapped}`) +
+      (noteOk ? "" : "; caveat note missing or hidden"));
+    fail++;
+  }
+}
+
+/* Dragging a slider must itself persist - checked in isolation, because the
+   location picker also writes and would otherwise mask a missing save on the
+   slider path. */
+{
+  const store = makeStorage();
+  const prevEls = els, prevListeners = listeners;
+  els = new Map(); listeners = [];
+  let msg = "";
+  try {
+    boot(document, window, store);
+    els.get("rate").value = "23.5";
+    for (const [t, ev, cb] of listeners)
+      if (t === els.get("rate") && ev === "input") cb({});
+  } catch (e) { msg = e.message; }
+  const wrote = store.dump();
+  els = prevEls; listeners = prevListeners;
+  if (!msg && wrote && /"rate":\s*"23\.5"/.test(wrote))
+    console.log("slider saves .. OK");
+  else {
+    console.error("slider saves .. FAILED: " + (msg ||
+      (wrote ? "stored record does not carry the new rate: " + wrote.slice(0, 120)
+             : "slider input wrote nothing")));
+    fail++;
+  }
+}
+
+/* Persistence: the page must write its settings, and a second boot seeded
+   with that storage must come back on them. Expectations come from the saved
+   record for the page that renders first, not from whatever page the checks
+   above happened to leave current. */
+const savedRaw = localStorage.dump();
+let savedObj = null;
+try { savedObj = JSON.parse(savedRaw); } catch { /* handled below */ }
+if (!savedObj || !Object.keys(savedObj).length) {
+  console.error("persist write . FAILED: nothing usable written to localStorage");
+  fail++;
+} else {
+  console.log(`persist write . OK (${Object.keys(savedObj).length} machine record(s))`);
+
+  // mirror the page's own key derivation so multi builds check the right record
+  const firstDs = DS.multi === true && Array.isArray(DS.machines) ? DS.machines[0] : DS;
+  const mach = firstDs.machine || {};
+  const key = mach.host || firstDs.label || mach.gpuName || "Machine 1";
+  const want = savedObj[key];
+
+  const prevEls = els, prevListeners = listeners;
+  els = new Map(); listeners = [];
+  let reloadErr = "";
+  try { boot(document, window, makeStorage(savedRaw)); }
+  catch (e) { reloadErr = e.message; }
+  const back = { rate: els.get("rate")?.value, sysw: els.get("sysw")?.value,
+                 co2: els.get("co2")?.value, loc: els.get("loc")?.value || "" };
+  els = prevEls; listeners = prevListeners;
+
+  if (!want) {
+    console.error(`persist reload  FAILED: no saved record under "${key}" ` +
+      `(have: ${Object.keys(savedObj).join(", ")})`);
+    fail++;
+  } else if (reloadErr) {
+    console.error("persist reload  FAILED: second boot threw: " + reloadErr);
+    fail++;
+  } else {
+    const same = ["rate", "sysw", "co2"]
+      .every(k => parseFloat(back[k]) === parseFloat(want[k]));
+    if (same && back.loc === (want.loc || ""))
+      console.log(`persist reload  OK (${back.rate}c, ${back.sysw}W, ${back.co2}g` +
+        (back.loc ? `, ${back.loc}` : "") + " restored)");
+    else {
+      console.error(`persist reload  FAILED: got ${JSON.stringify(back)} ` +
+        `want ${JSON.stringify(want)}`);
+      fail++;
+    }
+  }
+}
+
+/* Storage is unavailable or throws on some file:// origins, which is where
+   this page usually runs. It must degrade to reset-on-reload, not fail. */
+{
+  const denied = { getItem() { throw new Error("SecurityError"); },
+                   setItem() { throw new Error("SecurityError"); } };
+  const prevEls = els, prevListeners = listeners;
+  els = new Map(); listeners = [];
+  let ok = true, msg = "";
+  try {
+    boot(document, window, denied);
+    els.get("rate").value = "30";        // a slider nudge is what triggers a write
+    for (const [t, ev, cb] of listeners)
+      if (t === els.get("rate") && ev === "input") cb({});
+  } catch (e) { ok = false; msg = e.message; }
+  els = prevEls; listeners = prevListeners;
+  if (ok) console.log("storage denied  OK (boots and repaints without storage)");
+  else { console.error("storage denied  FAILED: " + msg); fail++; }
 }
 
 console.log(fail ? "\nRESULT: FAILED - do not publish" : "\nRESULT: PASS - safe to publish");

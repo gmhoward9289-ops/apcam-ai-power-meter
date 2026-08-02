@@ -1,10 +1,11 @@
-# shunt
+# apcam-ai-power-meter
 
 **APCAM — AI Power Calculation And Monitoring.** Works out what your local LLM habit
 actually costs in electricity, from *measured* GPU wattage rather than a spec-sheet
 guess, and renders it as a single self-contained HTML page.
 
-A shunt is the resistor you drop into a circuit specifically to measure current. Same idea.
+Named for the shunt resistor you drop into a circuit specifically to measure current. Same idea:
+measure it, do not guess it.
 
 > Ollama on Windows, NVIDIA GPU. See [Platform support](#platform-support) before you start.
 
@@ -24,7 +25,11 @@ Two independent sources, joined:
    runner's load-event timeline.
 
 Energy is then `duration x (measured GPU watts + your system-watts estimate)`, and cost
-is that against a rate you set with a slider.
+is that against a rate you set with a slider. Slider settings persist between reloads
+(per machine, via `localStorage`, degrading gracefully where `file://` storage is
+unavailable), and an optional location picker under the rate slider seeds it from the
+EIA average residential price for a U.S. state — labelled with its data vintage, and an
+average to start from, not a measurement of your bill.
 
 ### The finding that motivated this
 
@@ -43,8 +48,8 @@ emissions, and the request/rate tables export as CSV straight from the page.
 ## Quickstart
 
 ```powershell
-git clone https://github.com/gmhoward9289-ops/shunt-ai-power.git shunt
-cd shunt\apcam
+git clone https://github.com/gmhoward9289-ops/apcam-ai-power-meter.git
+cd apcam-ai-power-meter\apcam
 
 .\calibrate.ps1        # once per machine: measures your GPU's power envelope
 .\collect.ps1          # parse Ollama's logs -> dataset.json (+ append to history.json)
@@ -67,6 +72,14 @@ Before sharing a generated page, sanity-check it:
 
 ```powershell
 node verify.js         # runs the page's JS against a DOM stub; catches a broken build
+```
+
+The location averages behind the rate picker are embedded at build time, so the page
+never reaches the network. Refresh them when they drift:
+
+```powershell
+.\refresh-rates.ps1 -ApiKey $env:EIA_API_KEY -WhatIf   # show what would change
+.\refresh-rates.ps1 -ApiKey $env:EIA_API_KEY           # rewrite the table, then rebuild
 ```
 
 The parser has regression tests of its own: synthetic `server*.log` fixtures under
