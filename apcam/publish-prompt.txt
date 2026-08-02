@@ -2,7 +2,7 @@ Republish an existing Claude artifact that has just been regenerated on disk.
 
 Call the Artifact tool exactly once, with exactly these values:
 
-- file_path: C:\Users\gmhow\shunt\apcam\dashboard.html
+- file_path: C:\Users\gmhow\apcam-ai-power-meter\apcam\dashboard.html
 - url: https://claude.ai/code/artifact/02e67fc4-4f7f-4a86-8375-ca0b7151ae40
 - favicon: ⚡
 - description: Measured power draw and cost of local AI inference on this workstation

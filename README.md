@@ -1,10 +1,11 @@
-# shunt
+# apcam-ai-power-meter
 
 **APCAM — AI Power Calculation And Monitoring.** Works out what your local LLM habit
 actually costs in electricity, from *measured* GPU wattage rather than a spec-sheet
 guess, and renders it as a single self-contained HTML page.
 
-A shunt is the resistor you drop into a circuit specifically to measure current. Same idea.
+Named for the shunt resistor you drop into a circuit specifically to measure current. Same idea:
+measure it, do not guess it.
 
 > Ollama on Windows, NVIDIA GPU. See [Platform support](#platform-support) before you start.
 
@@ -47,8 +48,8 @@ emissions, and the request/rate tables export as CSV straight from the page.
 ## Quickstart
 
 ```powershell
-git clone https://github.com/gmhoward9289-ops/shunt-ai-power.git shunt
-cd shunt\apcam
+git clone https://github.com/gmhoward9289-ops/apcam-ai-power-meter.git
+cd apcam-ai-power-meter\apcam
 
 .\calibrate.ps1        # once per machine: measures your GPU's power envelope
 .\collect.ps1          # parse Ollama's logs -> dataset.json (+ append to history.json)
