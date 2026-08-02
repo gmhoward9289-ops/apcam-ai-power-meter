@@ -22,7 +22,9 @@ In rough order of value:
    issue with the measured fields from your `machine.json` — `gpuName`, `gpuLimitW`,
    `gpuIdleW`, `gpuActiveW`, `gpuMaxW`, `refModel`, `refTokensPerSec` — plus how you
    measured, if not `calibrate.ps1`. Idle-floor figures from non-reference cards are the
-   single most useful thing anyone can send.
+   single most useful thing anyone can send. A cited TDP entry for `apcam/data/gpu-tdp.ps1`
+   (a card missing from the spec-estimate table, or a correction to one already there) is
+   also welcome — see that file's own header for the citation rules.
 3. **Platform-support fixes.** Non-NVIDIA Windows paths, log layouts a different install
    produces, breakage from an Ollama version bump. See the standing caveat in the README:
    `llama-server` internals are not a stable interface.

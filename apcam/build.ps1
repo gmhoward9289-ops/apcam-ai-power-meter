@@ -18,12 +18,29 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+# [System.IO.File] resolves a relative path against .NET's process working
+# directory, which Set-Location / cd does NOT update - only PowerShell's own
+# idea of "current location" moves. Test-Path and string interpolation below
+# use that PowerShell location, so a relative path can look fine right up
+# until the .NET call reads or writes the wrong file (or, from a directory
+# with no matching relative path, throws a confusing "could not find a part
+# of the path"). GetUnresolvedProviderPathFromPSPath anchors every path to
+# PowerShell's location once, up front, before any .NET API sees it; "cannot
+# yet exist" (OutFile) is fine, only "must resolve to a filesystem path" is
+# required.
+function Resolve-InputPath([string]$Path) {
+    $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+}
+$Template = Resolve-InputPath $Template
+$OutFile  = Resolve-InputPath $OutFile
+
 # Accept -Dataset a.json,b.json (array binding) and -Dataset "a.json,b.json"
 # (one string) alike. Consequence: a literal comma inside a dataset path needs
 # the array form with the comma-free part quoted separately - not worth more
 # machinery for a character that is pathological in a filename anyway.
 $paths = @($Dataset | ForEach-Object { "$_" -split ',' } |
-           ForEach-Object { $_.Trim() } | Where-Object { $_ })
+           ForEach-Object { $_.Trim() } | Where-Object { $_ } |
+           ForEach-Object { Resolve-InputPath $_ })
 if (-not $paths.Count) { throw 'no dataset path given' }
 
 foreach ($f in (@($Template) + $paths)) {

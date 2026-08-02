@@ -355,6 +355,7 @@ pre code { background: none; border: 0; padding: 0; }
     <ul>
       <li><strong>Measured:</strong> GPU watts, VRAM and temperature; request start, duration, status, endpoint and client class; generation rates; model inventory and on-disk size.</li>
       <li><strong>Estimated:</strong> non-GPU system draw (the slider), the CO&#8322; factor (grid carbon intensity varies by region and hour; the slider is a flat average), and the assumption that the GPU holds its sustained wattage for a whole request. Short requests spend part of their time loading weights at lower draw, so their energy is mildly over-stated.</li>
+      <li><strong>Spec-estimated:</strong> when calibration finds no power sensor, GPU wattage can instead be modeled from the card's rated TDP (see <code>data/gpu-tdp.ps1</code>) &mdash; a coarser fallback than either measurement, shown with a wide range and never presented as a reading.</li>
       <li><strong>Rates are per model, not per request.</strong> The runner's internal task ids are non-contiguous and do not map one-to-one onto HTTP requests, so pairing a rate to a request would be guesswork. Rates are attributed only to the model loaded at the time, which the load timeline does establish.</li>
       <li><strong>Some tags cannot be told apart.</strong> Tags sharing a weights blob differ only in a parameters layer and are indistinguishable in the logs, so they appear as one entity.</li>
       <li><strong>Not measured:</strong> wall power, unless calibration used a smart plug (<code>-PlugUrl</code>). Otherwise only the GPU is instrumented and the gap to the outlet stays open.</li>
@@ -546,6 +547,13 @@ const okEv = EV.filter(e => e.status >= 200 && e.status < 300);
 
 const GPU_ACTIVE = MACH.gpuActiveW ?? 0;
 const GPU_IDLE   = MACH.gpuIdleW ?? 0;
+const GPU_ACTIVE_LO = MACH.gpuActiveLoW ?? null;
+const GPU_ACTIVE_HI = MACH.gpuActiveHiW ?? null;
+const GPU_IDLE_LO   = MACH.gpuIdleLoW ?? null;
+const GPU_IDLE_HI   = MACH.gpuIdleHiW ?? null;
+/* powerSource is the three-way source-of-truth; older dataset.json files built
+   before this field existed only have the measured boolean. */
+const POWER_SRC = MACH.powerSource || (MACH.measured ? "measured" : "none");
 let RATE = 0.17;
 let SYSW = MACH.systemWatts ?? 70;
 let CO2 = 370;
@@ -603,7 +611,7 @@ function paintHero() {
   document.getElementById("hero-cap").innerHTML =
     `${num(kwh(activeSec) * 1000, 1)} Wh across <strong>${EV.length} requests</strong> and ` +
     `${dur(activeSec)} of GPU-active time, at ${num(activeW(), 0)} W ` +
-    `(${GPU_ACTIVE} W ${MACH.measured ? "measured" : "assumed"} GPU + ${SYSW} W estimated system).`;
+    `(${GPU_ACTIVE} W ${POWER_SRC === "measured" ? "measured" : POWER_SRC === "spec-estimate" ? "spec-estimated" : "assumed"} GPU + ${SYSW} W estimated system).`;
 
   const idleSec = Math.max(0, windowSec - activeSec);
   const R = [
@@ -656,10 +664,16 @@ const IC_INFO = `<svg class="icon" viewBox="0 0 20 20" fill="none" aria-hidden="
 function paintFindings() {
   const F = [];
 
-  if (!MACH.measured) F.push(["warn", IC_WARN, "Power figures are not measured on this machine",
+  if (POWER_SRC === "none") F.push(["warn", IC_WARN, "Power figures are not measured on this machine",
     `<code>machine.json</code> has no measured GPU envelope, so every energy and cost number ` +
     `below rests on an assumed ${GPU_ACTIVE} W. Run <code>calibrate.ps1</code> to measure it, ` +
     `or edit the file by hand.`]);
+  else if (POWER_SRC === "spec-estimate") F.push(["info", IC_INFO, "Power figures are modeled from rated TDP, not measured",
+    `No power sensor was found, so <code>calibrate.ps1</code> modeled ${GPU_ACTIVE} W from ` +
+    `${MACH.gpuName || "this GPU"}'s rated TDP` +
+    (MACH.gpuTdpW ? ` (${MACH.gpuTdpW} W, ${MACH.gpuTdpSource || "spec sheet"})` : "") +
+    (GPU_ACTIVE_LO != null && GPU_ACTIVE_HI != null ? ` &mdash; plausible range ${GPU_ACTIVE_LO}-${GPU_ACTIVE_HI} W.` : ".") +
+    ` Run <code>calibrate.ps1</code> on hardware with real telemetry, or a plug meter, for a measured number.`]);
 
   const idleSec = Math.max(0, windowSec - activeSec);
   const idleCost = idleW() * idleSec / 3600 / 1000 * RATE;
@@ -1052,15 +1066,20 @@ function chartPerMillion() {
   svg.appendChild(ft);
 
   const hw = hwPerSec > 0;
+  const wattNote = POWER_SRC === "measured" ? "measured on this machine"
+    : POWER_SRC === "spec-estimate" ? "modeled from rated TDP, not measured"
+    : "assumed, not measured";
   document.getElementById("per-note").textContent = hw
     ? "Bars are electricity only; the table adds hardware amortization and a hosted-API reference."
-    : "Electricity only, at the rates measured on this machine.";
+    : `Electricity only, at the rates ${wattNote}.`;
 
   /* Best local $/Mtok as the comparison base: rateGroups is sorted fastest
      first, and watts are flat, so the fastest model is also the cheapest. */
   const localBest = perMillion(rateGroups[0].avg) + (hw ? perMillionHw(rateGroups[0].avg) : 0);
   document.getElementById("t-per").innerHTML =
-    `<table><caption>Derived from measured throughput and measured GPU draw.` +
+    `<table><caption>Derived from measured throughput and ` +
+    (POWER_SRC === "measured" ? "measured" : POWER_SRC === "spec-estimate" ? "modeled (TDP-based)" : "assumed") +
+    ` GPU draw.` +
     (hw ? ` Incl. hardware spreads the ${fmtMoney(GPU_COST)} GPU over ${GPU_LIFE} years of wall-clock time.` : "") +
     `</caption><thead><tr>` +
     `<th>Model</th><th>Tok/s</th><th>Hours / 1M</th><th>kWh / 1M</th><th>Cost / 1M</th>` +
@@ -1131,12 +1150,19 @@ function paintTiles() {
     g ? `${g.util}% util · ${g.temp}°C · ${num(g.vramUsed)} / ${num(g.vramTotal)} MiB VRAM.` +
         (Math.abs(g.w - GPU_IDLE) < 3 ? ` This idle reading matches the ${GPU_IDLE} W calibration.` : "")
       : "No GPU telemetry available."]);
-  T.push(["Measured power envelope",
-    `${GPU_IDLE}<small> → </small>${GPU_ACTIVE}<small>W</small>`,
-    MACH.measured
+  T.push([POWER_SRC === "measured" ? "Measured power envelope"
+      : POWER_SRC === "spec-estimate" ? "Estimated power envelope" : "Power envelope",
+    (POWER_SRC === "spec-estimate" && GPU_IDLE_LO != null && GPU_ACTIVE_LO != null)
+      ? `${GPU_IDLE_LO}<small>-${GPU_IDLE_HI} → </small>${GPU_ACTIVE_LO}<small>-${GPU_ACTIVE_HI}W</small>`
+      : `${GPU_IDLE}<small> → </small>${GPU_ACTIVE}<small>W</small>`,
+    POWER_SRC === "measured"
       ? `Idle to sustained generation, ${MACH.calibSamples} samples` +
         (MACH.refModel ? ` on ${MACH.refModel}` : "") + `. ` +
         (MACH.gpuLimitW ? `Card limit ${MACH.gpuLimitW} W; peak seen ${MACH.gpuMaxW} W.` : "")
+      : POWER_SRC === "spec-estimate"
+      ? `Modeled from ${MACH.gpuName || "this GPU"}'s rated TDP` +
+        (MACH.gpuTdpW ? ` (${MACH.gpuTdpW} W, ${MACH.gpuTdpSource || "spec sheet"})` : "") +
+        ` — not measured.`
       : `Not measured on this machine — run calibrate.ps1.`]);
   T.push(["Resident model", ld ? ld.name : "none",
     ld ? `${gib(ld.vram)} GiB held in VRAM.`
@@ -1197,9 +1223,16 @@ function paintStatic() {
     ["Clients", new Set(EV.map(e => e.client)).size]
   ].map(([k, v]) => `<span class="chip">${k} <b>${v}</b></span>`).join("");
   document.getElementById("method-lead").innerHTML =
-    `GPU power was measured with <code>nvidia-smi</code> during a real generation on this machine` +
-    (MACH.calibSamples ? ` &mdash; ${MACH.calibSamples} samples across one request, idle through ` +
-      `sustained load` : "") + `. Request timestamps, durations, endpoints, client classes, ` +
+    (POWER_SRC === "measured"
+      ? `GPU power was measured with <code>nvidia-smi</code> during a real generation on this machine` +
+        (MACH.calibSamples ? ` &mdash; ${MACH.calibSamples} samples across one request, idle through ` +
+          `sustained load` : "") + `. `
+      : POWER_SRC === "spec-estimate"
+      ? `GPU power was not measured on this machine. It is modeled from ${MACH.gpuName || "the detected GPU"}'s ` +
+        `rated TDP` + (MACH.gpuTdpW ? ` (${MACH.gpuTdpW} W, ${MACH.gpuTdpSource || "spec sheet"})` : "") +
+        ` &mdash; treat it as a rough estimate, not a reading. `
+      : `GPU power was not measured on this machine; figures below use an assumed wattage. `) +
+    `Request timestamps, durations, endpoints, client classes, ` +
     `generation rates and model attribution were parsed from Ollama's own server logs. ` +
     `Everything else is derived from those two sources plus the two sliders above.`;
   document.getElementById("staleness").innerHTML =

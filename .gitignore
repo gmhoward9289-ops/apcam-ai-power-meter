@@ -12,8 +12,10 @@ dashboard.html
 refresh.log
 refresh.log.old
 
-# the sample dataset IS tracked - it is synthetic
+# the sample datasets ARE tracked - they are synthetic
 !sample/dataset.sample.json
+!sample/dataset.sample2.json
+!sample/dataset.spec-estimate.sample.json
 
 # editors / OS
 .vscode/

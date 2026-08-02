@@ -110,6 +110,7 @@ which ones to trust.
 |---|---|
 | **Measured** | GPU watts, VRAM, temperature. Request start, duration, status, endpoint, client class. Generation rates. Model inventory and on-disk size. |
 | **Estimated** | Non-GPU system draw (the slider, default 70 W). And the assumption that the GPU holds sustained wattage for a whole request — short requests spend part of their time loading weights at lower draw, so their energy is mildly over-stated. |
+| **Spec-estimated** | GPU idle/active wattage, only when `calibrate.ps1` found no power sensor at all. It detects the GPU model and looks it up in `data/gpu-tdp.ps1`'s curated table of vendor-published TDP figures, then derives a wide idle/active band from that rating (`powerSource: "spec-estimate"` in `machine.json`). This is the worst rung of the ladder — a thermal ceiling is not a measured draw — and the page always says so: the hero line, the envelope tile, and the footer all read "estimated"/"modeled", never "measured", and cite the TDP source. Skip it with `calibrate.ps1 -NoSpecEstimate` to keep the old fill-in-by-hand behavior instead. |
 | **Not measured** | Wall power, unless you calibrate with a smart plug (`calibrate.ps1 -PlugUrl <addr>`, Tasmota/Shelly), which records `wallIdleW`/`wallActiveW`. Without one, only the GPU is instrumented and the gap to the outlet stays open. |
 
 ### Optional: hardware amortization
@@ -249,7 +250,7 @@ Nothing is transmitted anywhere. The page is a local file.
 | | |
 |---|---|
 | **Windows + NVIDIA** | Supported. This is what it was built and tested against (Ollama 0.32.5), on Windows PowerShell 5.1. Multi-GPU boxes: calibrate one card with `.\calibrate.ps1 -GpuIndex N`; collect samples the same card. |
-| **Windows, non-NVIDIA** | Partial. `calibrate.ps1` writes a `machine.json` with null power fields and tells you so; fill in `gpuIdleW` / `gpuActiveW` by hand (a plug meter is the best source) and everything else works. |
+| **Windows, non-NVIDIA** | Partial. With no power sensor, `calibrate.ps1` detects the GPU model via `Win32_VideoController` and, if it is in `data/gpu-tdp.ps1`'s table, writes a spec-based estimate (`powerSource: "spec-estimate"`) instead of giving up. Otherwise — or with `-NoSpecEstimate` — it writes a `machine.json` with null power fields and tells you so; fill in `gpuIdleW` / `gpuActiveW` by hand (a plug meter is the best source) and everything else works. |
 | **Linux + NVIDIA** | Supported under [PowerShell 7](https://learn.microsoft.com/powershell/scripting/install/installing-powershell) (`pwsh`). `nvidia-smi` sampling is identical to Windows. Logs: `~/.ollama/logs` is tried first; if no `server*.log` turns up, `collect.ps1` dumps the `ollama` journald unit to a temp file and parses that (system unit first, then `--user-unit`; assumes the stock service install; the dump is deleted after the scan). Schedule with `./install-schedule.sh` — a systemd *user* timer, which fires only while you are logged in unless you `loginctl enable-linger`. |
 | **Linux + AMD** | Best-effort. `calibrate.ps1 -GpuVendor amd` probes `amd-smi`, then `rocm-smi`; their JSON layouts drift between ROCm releases, so the probe pattern-matches field names and falls back to the manual-entry path when no power figure comes back. Untested on real AMD hardware — reports welcome. |
 | **macOS (Apple Silicon)** | Supported with caveats, under PowerShell 7. GPU power comes from `powermetrics`, which only talks to root: calibrate with `sudo pwsh -NoProfile -File calibrate.ps1` (without root it degrades to the manual-entry path and says so). The figure is the Apple GPU rail only — CPU and ANE draw are excluded — and unified memory means there is no VRAM number. Intel Macs print no `GPU Power` lines and land on the manual path. Logs: `~/.ollama/logs`. Schedule with `./install-schedule.sh` — a launchd agent, missed slots run on wake. |
@@ -258,6 +259,14 @@ Nothing is transmitted anywhere. The page is a local file.
 `calibrate.ps1 -GpuVendor nvidia|amd|apple|none` overrides GPU vendor detection
 (default: `apple` on macOS, `nvidia` everywhere else). On Linux/macOS run the scripts as
 `pwsh ./collect.ps1`; on Windows they still run under stock PowerShell 5.1.
+
+**No power sensor at all.** When telemetry is unavailable on any platform,
+`calibrate.ps1` tries one more thing before asking for manual entry: it detects the GPU
+model by name (`Win32_VideoController` on Windows, `lspci` on Linux, `system_profiler
+SPDisplaysDataType` on macOS) and, if that model is in `data/gpu-tdp.ps1`'s curated TDP
+table, derives a wide idle/active band from its rated TDP. See [What is measured, what is
+estimated](#what-is-measured-what-is-estimated) for how this is labeled on the page. Pass
+`-NoSpecEstimate` to skip it and keep the old null-fields-fill-in-by-hand behavior.
 
 **Wall power from a smart plug.** If the machine is on a Tasmota or Shelly plug,
 `calibrate.ps1 -PlugUrl http://<plug-ip>` samples the plug's local HTTP API during the
