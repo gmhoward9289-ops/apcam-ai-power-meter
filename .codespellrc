@@ -1,0 +1,3 @@
+[codespell]
+ignore-words-list = ane,fillin,nd
+skip = ./.git
